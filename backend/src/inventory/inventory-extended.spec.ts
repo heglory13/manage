@@ -22,6 +22,7 @@ describe('InventoryService - Extended with StorageZone', () => {
         update: jest.fn().mockResolvedValue({}),
       },
       inventoryTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ purchasePrice: 100 }),
         create: jest.fn().mockImplementation(({ data }) => ({
           id: 'tx-1',
           ...data,
@@ -61,6 +62,8 @@ describe('InventoryService - Extended with StorageZone', () => {
 
       const result = await service.stockIn('product-1', 10, 'user-1', {
         storageZoneId: 'zone-1',
+        purchasePrice: 100,
+        salePrice: 150,
       });
 
       expect(result).toBeDefined();
@@ -107,7 +110,10 @@ describe('InventoryService - Extended with StorageZone', () => {
     });
 
     it('should work without storageZoneId', async () => {
-      const result = await service.stockIn('product-1', 10, 'user-1');
+      const result = await service.stockIn('product-1', 10, 'user-1', {
+        purchasePrice: 100,
+        salePrice: 150,
+      });
       expect(result).toBeDefined();
     });
   });

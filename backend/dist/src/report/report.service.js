@@ -45,41 +45,55 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportService = void 0;
 exports.computeNxtReport = computeNxtReport;
 const common_1 = require("@nestjs/common");
+const index_1 = require("@prisma/client/index");
 const prisma_service_js_1 = require("../prisma/prisma.service.js");
 const ExcelJS = __importStar(require("exceljs"));
+const inventory_valuation_util_js_1 = require("../inventory/inventory-valuation.util.js");
 function computeNxtReport(skuCombos, transactionsBefore, transactionsInPeriod) {
-    const result = [];
-    for (const combo of skuCombos) {
-        const openingIn = transactionsBefore
-            .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_IN')
-            .reduce((sum, t) => sum + t.quantity, 0);
-        const openingOut = transactionsBefore
-            .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_OUT')
-            .reduce((sum, t) => sum + t.quantity, 0);
-        const openingStock = openingIn - openingOut;
-        const totalIn = transactionsInPeriod
-            .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_IN')
-            .reduce((sum, t) => sum + t.quantity, 0);
-        const totalOut = transactionsInPeriod
-            .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_OUT')
-            .reduce((sum, t) => sum + t.quantity, 0);
-        const closingStock = openingStock + totalIn - totalOut;
-        if (openingStock !== 0 || totalIn !== 0 || totalOut !== 0) {
-            result.push({
-                skuComboId: combo.id,
-                compositeSku: combo.compositeSku,
-                classification: combo.classification.name,
-                color: combo.color.name,
-                size: combo.size.name,
-                material: combo.material.name,
-                openingStock,
-                totalIn,
-                totalOut,
-                closingStock,
-            });
-        }
-    }
-    return result;
+    const skuComboMap = new Map(skuCombos.map((combo) => [combo.id, combo]));
+    const syntheticDateBefore = new Date('2000-01-01T00:00:00.000Z');
+    const syntheticDateInPeriod = new Date('2000-01-02T00:00:00.000Z');
+    const rows = [...transactionsBefore, ...transactionsInPeriod]
+        .filter((transaction) => Boolean(transaction.skuComboId))
+        .map((transaction) => {
+        const combo = skuComboMap.get(transaction.skuComboId);
+        return {
+            id: `${transaction.skuComboId}-${transaction.type}-${transaction.quantity}-${transaction === transactionsBefore[0] ? 'before' : 'period'}`,
+            productId: transaction.skuComboId,
+            productName: combo?.compositeSku ?? transaction.skuComboId,
+            productSku: combo?.compositeSku ?? transaction.skuComboId,
+            skuComboId: transaction.skuComboId,
+            compositeSku: combo?.compositeSku ?? transaction.skuComboId,
+            classification: combo?.classification?.name ?? '-',
+            color: combo?.color?.name ?? '-',
+            size: combo?.size?.name ?? '-',
+            material: combo?.material?.name ?? '-',
+            type: transaction.type,
+            quantity: transaction.quantity,
+            purchasePrice: transaction.purchasePrice ?? 0,
+            createdAt: transactionsBefore.includes(transaction)
+                ? syntheticDateBefore
+                : syntheticDateInPeriod,
+            status: index_1.InventoryTransactionStatus.ACTIVE,
+        };
+    });
+    return (0, inventory_valuation_util_js_1.buildInventoryValuationBuckets)(rows, new Date('2000-01-02T00:00:00.000Z'), new Date('2000-01-02T23:59:59.999Z')).map((bucket) => ({
+        skuComboId: bucket.key.startsWith('product:') ? null : bucket.key,
+        compositeSku: bucket.compositeSku,
+        productName: bucket.productName,
+        classification: bucket.classification,
+        color: bucket.color,
+        size: bucket.size,
+        material: bucket.material,
+        openingStock: bucket.openingQty,
+        openingValue: bucket.openingValue,
+        totalIn: bucket.totalInQty,
+        totalInValue: bucket.totalInValue,
+        totalOut: bucket.totalOutQty,
+        totalOutValue: bucket.totalOutValue,
+        closingStock: bucket.closingQty,
+        closingValue: bucket.closingValue,
+    }));
 }
 let ReportService = class ReportService {
     prisma;
@@ -149,29 +163,59 @@ let ReportService = class ReportService {
     async getNxtReport(startDate, endDate) {
         const start = new Date(startDate);
         const end = new Date(endDate);
-        const skuCombos = await this.prisma.skuCombo.findMany({
+        const transactions = await this.prisma.inventoryTransaction.findMany({
+            where: {
+                createdAt: { lte: end },
+                status: index_1.InventoryTransactionStatus.ACTIVE,
+            },
             include: {
-                classification: true,
-                color: true,
-                size: true,
-                material: true,
+                product: true,
+                skuCombo: {
+                    include: {
+                        classification: true,
+                        color: true,
+                        size: true,
+                        material: true,
+                    },
+                },
             },
+            orderBy: { createdAt: 'asc' },
         });
-        const transactionsBefore = await this.prisma.inventoryTransaction.findMany({
-            where: {
-                createdAt: { lt: start },
-                skuComboId: { not: null },
-            },
-            select: { skuComboId: true, type: true, quantity: true },
-        });
-        const transactionsInPeriod = await this.prisma.inventoryTransaction.findMany({
-            where: {
-                createdAt: { gte: start, lte: end },
-                skuComboId: { not: null },
-            },
-            select: { skuComboId: true, type: true, quantity: true },
-        });
-        return computeNxtReport(skuCombos, transactionsBefore, transactionsInPeriod);
+        return (0, inventory_valuation_util_js_1.buildInventoryValuationBuckets)(transactions.map((transaction) => ({
+            id: transaction.id,
+            productId: transaction.productId,
+            productName: transaction.product.name,
+            productSku: transaction.product.sku,
+            skuComboId: transaction.skuComboId,
+            compositeSku: transaction.skuCombo?.compositeSku ?? null,
+            classification: transaction.skuCombo?.classification?.name ?? null,
+            color: transaction.skuCombo?.color?.name ?? null,
+            size: transaction.skuCombo?.size?.name ?? null,
+            material: transaction.skuCombo?.material?.name ?? null,
+            type: transaction.type,
+            quantity: transaction.quantity,
+            purchasePrice: transaction.purchasePrice
+                ? Number(transaction.purchasePrice)
+                : Number(transaction.product.price ?? 0),
+            createdAt: transaction.createdAt,
+            status: transaction.status,
+        })), start, end).map((bucket) => ({
+            skuComboId: bucket.key.startsWith('product:') ? null : bucket.key,
+            compositeSku: bucket.compositeSku,
+            productName: bucket.productName,
+            classification: bucket.classification,
+            color: bucket.color,
+            size: bucket.size,
+            material: bucket.material,
+            openingStock: bucket.openingQty,
+            openingValue: bucket.openingValue,
+            totalIn: bucket.totalInQty,
+            totalInValue: bucket.totalInValue,
+            totalOut: bucket.totalOutQty,
+            totalOutValue: bucket.totalOutValue,
+            closingStock: bucket.closingQty,
+            closingValue: bucket.closingValue,
+        }));
     }
     async exportNxtExcel(startDate, endDate) {
         const data = await this.getNxtReport(startDate, endDate);
@@ -182,14 +226,19 @@ let ReportService = class ReportService {
         const worksheet = workbook.addWorksheet('Báo cáo NXT');
         worksheet.columns = [
             { header: 'SKU', key: 'compositeSku', width: 30 },
+            { header: 'Ten san pham', key: 'productName', width: 30 },
             { header: 'Phân loại', key: 'classification', width: 20 },
             { header: 'Màu', key: 'color', width: 15 },
             { header: 'Size', key: 'size', width: 10 },
             { header: 'Chất liệu', key: 'material', width: 15 },
             { header: 'Tồn đầu kỳ', key: 'openingStock', width: 15 },
+            { header: 'Giá trị tồn đầu', key: 'openingValue', width: 18 },
             { header: 'Nhập', key: 'totalIn', width: 12 },
+            { header: 'Giá trị nhập', key: 'totalInValue', width: 18 },
             { header: 'Xuất', key: 'totalOut', width: 12 },
+            { header: 'Giá trị xuất', key: 'totalOutValue', width: 18 },
             { header: 'Tồn cuối kỳ', key: 'closingStock', width: 15 },
+            { header: 'Giá trị tồn cuối', key: 'closingValue', width: 18 },
         ];
         const headerRow = worksheet.getRow(1);
         headerRow.font = { bold: true };
@@ -209,6 +258,8 @@ let ReportService = class ReportService {
             { header: 'Size', key: 'size', width: 10 },
             { header: 'Chất liệu', key: 'material', width: 15 },
             { header: 'Số lượng', key: 'quantity', width: 12 },
+            { header: 'Giá nhập', key: 'purchasePrice', width: 14 },
+            { header: 'Giá bán', key: 'salePrice', width: 14 },
             { header: 'Tình trạng hàng', key: 'condition', width: 20 },
             { header: 'Vị trí kho', key: 'position', width: 15 },
             { header: 'Loại kho', key: 'warehouseType', width: 15 },
@@ -227,6 +278,14 @@ let ReportService = class ReportService {
         const size = String(row.size || '').trim();
         const material = String(row.material || '').trim();
         const quantity = Number(row.quantity);
+        const rawPurchasePrice = row.purchasePrice;
+        const rawSalePrice = row.salePrice;
+        const purchasePrice = rawPurchasePrice === undefined || rawPurchasePrice === null || rawPurchasePrice === ''
+            ? null
+            : Number(rawPurchasePrice);
+        const salePrice = rawSalePrice === undefined || rawSalePrice === null || rawSalePrice === ''
+            ? null
+            : Number(rawSalePrice);
         if (!classification) {
             errors.push({ row: rowIndex, field: 'Phân loại', message: 'Phân loại là bắt buộc' });
         }
@@ -253,6 +312,12 @@ let ReportService = class ReportService {
         }
         if (isNaN(quantity) || quantity <= 0) {
             errors.push({ row: rowIndex, field: 'Số lượng', message: 'Số lượng phải lớn hơn 0' });
+        }
+        if (purchasePrice !== null && (isNaN(purchasePrice) || purchasePrice <= 0)) {
+            errors.push({ row: rowIndex, field: 'Gia nhap', message: 'Gia nhap la bat buoc va phai lon hon 0' });
+        }
+        if (salePrice !== null && (isNaN(salePrice) || salePrice <= 0)) {
+            errors.push({ row: rowIndex, field: 'Gia ban', message: 'Gia ban la bat buoc va phai lon hon 0' });
         }
         return { valid: errors.length === 0, errors };
     }
@@ -292,10 +357,12 @@ let ReportService = class ReportService {
                 size: row.getCell(3).value,
                 material: row.getCell(4).value,
                 quantity: row.getCell(5).value,
-                condition: row.getCell(6).value,
-                position: row.getCell(7).value,
-                warehouseType: row.getCell(8).value,
-                note: row.getCell(9).value,
+                purchasePrice: row.getCell(6).value,
+                salePrice: row.getCell(7).value,
+                condition: row.getCell(8).value,
+                position: row.getCell(9).value,
+                warehouseType: row.getCell(10).value,
+                note: row.getCell(11).value,
             });
         });
         if (rows.length === 0) {
@@ -320,6 +387,12 @@ let ReportService = class ReportService {
             const sizeName = String(row.size).trim().toLowerCase();
             const materialName = String(row.material).trim().toLowerCase();
             const quantity = Number(row.quantity);
+            const purchasePrice = row.purchasePrice === undefined || row.purchasePrice === null || row.purchasePrice === ''
+                ? 0
+                : Number(row.purchasePrice);
+            const salePrice = row.salePrice === undefined || row.salePrice === null || row.salePrice === ''
+                ? 0
+                : Number(row.salePrice);
             const conditionName = row.condition ? String(row.condition).trim().toLowerCase() : null;
             const classificationId = classificationMap.get(classificationName);
             const colorId = colorMap.get(colorName);
@@ -332,6 +405,8 @@ let ReportService = class ReportService {
                 sizeId,
                 materialId,
                 quantity,
+                purchasePrice,
+                salePrice,
                 productConditionId,
             };
         });
@@ -357,6 +432,9 @@ let ReportService = class ReportService {
                     productId: product.id,
                     type: 'STOCK_IN',
                     quantity: op.quantity,
+                    purchasePrice: op.purchasePrice,
+                    salePrice: op.salePrice,
+                    status: index_1.InventoryTransactionStatus.ACTIVE,
                     userId,
                     skuComboId: skuCombo.id,
                     productConditionId: op.productConditionId || null,
@@ -365,7 +443,10 @@ let ReportService = class ReportService {
             }));
             txnOps.push(this.prisma.product.update({
                 where: { id: product.id },
-                data: { stock: { increment: op.quantity } },
+                data: {
+                    stock: { increment: op.quantity },
+                    price: op.salePrice,
+                },
             }));
             importedRows++;
         }

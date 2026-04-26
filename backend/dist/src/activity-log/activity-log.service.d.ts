@@ -1,4 +1,4 @@
-import { ActivityLog } from '@prisma/client';
+import { ActivityLog } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 export interface ActivityLogCreateData {
     userId: string;

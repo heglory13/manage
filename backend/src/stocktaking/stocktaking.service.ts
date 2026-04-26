@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { StocktakingStatus } from '@prisma/client';
+import { StocktakingStatus } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { SubmitStocktakingItemDto } from './dto/create-stocktaking.dto.js';
 import type { UpdateStocktakingItemDto } from './dto/update-stocktaking-item.dto.js';
@@ -92,6 +92,7 @@ export class StocktakingService {
     mode: 'full' | 'selected',
     userId: string,
     productIds?: string[],
+    cutoffTime?: string,
   ) {
     if (mode === 'selected' && (!productIds || productIds.length === 0)) {
       throw new BadRequestException(
@@ -107,7 +108,7 @@ export class StocktakingService {
       throw new BadRequestException('Không tìm thấy sản phẩm nào');
     }
 
-    const cutoffTime = new Date();
+    const cutoffDate = cutoffTime ? new Date(cutoffTime) : new Date();
 
     // Create the stocktaking record with items (actualQuantity=0, discrepancy=0 initially)
     const record = await this.prisma.stocktakingRecord.create({
@@ -115,7 +116,7 @@ export class StocktakingService {
         createdBy: userId,
         status: StocktakingStatus.CHECKING,
         mode,
-        cutoffTime,
+        cutoffTime: cutoffDate,
         items: {
           create: products.map((product) => ({
             productId: product.id,

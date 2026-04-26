@@ -14,7 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StocktakingController = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const index_js_1 = require("../auth/decorators/index.js");
 const index_js_2 = require("../auth/decorators/index.js");
 const stocktaking_service_js_1 = require("./stocktaking.service.js");
@@ -26,7 +26,7 @@ let StocktakingController = class StocktakingController {
     }
     async create(dto, currentUser) {
         const user = currentUser;
-        return this.stocktakingService.create(dto.mode, user.userId, dto.productIds);
+        return this.stocktakingService.create(dto.mode, user.userId, dto.productIds, dto.cutoffTime);
     }
     async submit(id, dto, currentUser) {
         const user = currentUser;
@@ -79,7 +79,7 @@ __decorate([
 ], StocktakingController.prototype, "submit", null);
 __decorate([
     (0, common_1.Patch)(':id/approve'),
-    (0, index_js_2.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_2.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, index_js_1.CurrentUser)()),
     __metadata("design:type", Function),
@@ -88,7 +88,7 @@ __decorate([
 ], StocktakingController.prototype, "approve", null);
 __decorate([
     (0, common_1.Patch)(':id/reject'),
-    (0, index_js_2.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_2.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, index_js_1.CurrentUser)()),
     __metadata("design:type", Function),

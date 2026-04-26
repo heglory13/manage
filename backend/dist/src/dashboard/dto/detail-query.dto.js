@@ -14,6 +14,8 @@ const class_validator_1 = require("class-validator");
 class DetailQueryDto {
     page;
     limit;
+    startDate;
+    endDate;
 }
 exports.DetailQueryDto = DetailQueryDto;
 __decorate([
@@ -28,4 +30,14 @@ __decorate([
     (0, class_validator_1.Min)(1),
     __metadata("design:type", Number)
 ], DetailQueryDto.prototype, "limit", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], DetailQueryDto.prototype, "startDate", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], DetailQueryDto.prototype, "endDate", void 0);
 //# sourceMappingURL=detail-query.dto.js.map

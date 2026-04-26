@@ -36,6 +36,7 @@ __decorate([
 class CreateStocktakingDto {
     mode;
     productIds;
+    cutoffTime;
 }
 exports.CreateStocktakingDto = CreateStocktakingDto;
 __decorate([
@@ -49,6 +50,11 @@ __decorate([
     (0, class_validator_1.IsString)({ each: true }),
     __metadata("design:type", Array)
 ], CreateStocktakingDto.prototype, "productIds", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], CreateStocktakingDto.prototype, "cutoffTime", void 0);
 class SubmitStocktakingItemDto {
     itemId;
     actualQuantity;

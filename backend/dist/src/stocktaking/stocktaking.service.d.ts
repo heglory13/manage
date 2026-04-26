@@ -1,4 +1,4 @@
-import { StocktakingStatus } from '@prisma/client';
+import { StocktakingStatus } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { SubmitStocktakingItemDto } from './dto/create-stocktaking.dto.js';
 import type { UpdateStocktakingItemDto } from './dto/update-stocktaking-item.dto.js';
@@ -41,7 +41,7 @@ export declare class StocktakingService {
         valid: boolean;
         message?: string;
     };
-    create(mode: 'full' | 'selected', userId: string, productIds?: string[]): Promise<{
+    create(mode: 'full' | 'selected', userId: string, productIds?: string[], cutoffTime?: string): Promise<{
         creator: {
             id: string;
             email: string;
@@ -207,16 +207,16 @@ export declare class StocktakingService {
     }>;
     recordStatusChange(recordId: string, status: StocktakingStatus, changedBy?: string, note?: string): Promise<{
         id: string;
-        note: string | null;
         status: import(".prisma/client").$Enums.StocktakingStatus;
+        note: string | null;
         recordId: string;
         changedBy: string | null;
         changedAt: Date;
     }>;
     getStatusHistory(recordId: string): Promise<{
         id: string;
-        note: string | null;
         status: import(".prisma/client").$Enums.StocktakingStatus;
+        note: string | null;
         recordId: string;
         changedBy: string | null;
         changedAt: Date;
@@ -254,8 +254,8 @@ export declare class StocktakingService {
         })[];
         statusHistory: {
             id: string;
-            note: string | null;
             status: import(".prisma/client").$Enums.StocktakingStatus;
+            note: string | null;
             recordId: string;
             changedBy: string | null;
             changedAt: Date;

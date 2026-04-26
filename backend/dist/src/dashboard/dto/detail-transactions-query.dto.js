@@ -15,6 +15,8 @@ class DetailTransactionsQueryDto {
     type;
     page;
     limit;
+    startDate;
+    endDate;
 }
 exports.DetailTransactionsQueryDto = DetailTransactionsQueryDto;
 __decorate([
@@ -34,4 +36,14 @@ __decorate([
     (0, class_validator_1.Min)(1),
     __metadata("design:type", Number)
 ], DetailTransactionsQueryDto.prototype, "limit", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], DetailTransactionsQueryDto.prototype, "startDate", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], DetailTransactionsQueryDto.prototype, "endDate", void 0);
 //# sourceMappingURL=detail-transactions-query.dto.js.map

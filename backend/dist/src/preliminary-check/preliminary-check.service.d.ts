@@ -42,9 +42,9 @@ export declare class PreliminaryCheckService {
         createdAt: Date;
         updatedAt: Date;
         quantity: number;
+        status: import(".prisma/client").$Enums.PreliminaryCheckStatus;
         imageUrl: string | null;
         note: string | null;
-        status: import(".prisma/client").$Enums.PreliminaryCheckStatus;
         warehouseTypeId: string | null;
         createdBy: string;
     }>;
@@ -71,9 +71,9 @@ export declare class PreliminaryCheckService {
         createdAt: Date;
         updatedAt: Date;
         quantity: number;
+        status: import(".prisma/client").$Enums.PreliminaryCheckStatus;
         imageUrl: string | null;
         note: string | null;
-        status: import(".prisma/client").$Enums.PreliminaryCheckStatus;
         warehouseTypeId: string | null;
         createdBy: string;
     }>;
@@ -99,9 +99,9 @@ export declare class PreliminaryCheckService {
         createdAt: Date;
         updatedAt: Date;
         quantity: number;
+        status: import(".prisma/client").$Enums.PreliminaryCheckStatus;
         imageUrl: string | null;
         note: string | null;
-        status: import(".prisma/client").$Enums.PreliminaryCheckStatus;
         warehouseTypeId: string | null;
         createdBy: string;
     }>;

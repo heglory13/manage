@@ -15,7 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportController = void 0;
 const common_1 = require("@nestjs/common");
 const platform_express_1 = require("@nestjs/platform-express");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const index_js_1 = require("../auth/decorators/index.js");
 const index_js_2 = require("../auth/decorators/index.js");
 const report_service_js_1 = require("./report.service.js");
@@ -67,7 +67,7 @@ let ReportController = class ReportController {
 exports.ReportController = ReportController;
 __decorate([
     (0, common_1.Get)('export'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __param(1, (0, common_1.Res)()),
     __metadata("design:type", Function),
@@ -76,7 +76,7 @@ __decorate([
 ], ReportController.prototype, "exportExcel", null);
 __decorate([
     (0, common_1.Get)('nxt'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_3.NxtReportQueryDto]),
@@ -84,7 +84,7 @@ __decorate([
 ], ReportController.prototype, "getNxtReport", null);
 __decorate([
     (0, common_1.Get)('nxt/export'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __param(1, (0, common_1.Res)()),
     __metadata("design:type", Function),
@@ -100,7 +100,7 @@ __decorate([
 ], ReportController.prototype, "downloadTemplate", null);
 __decorate([
     (0, common_1.Post)('stock-in/import'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file')),
     __param(0, (0, common_1.UploadedFile)()),
     __param(1, (0, index_js_2.CurrentUser)()),

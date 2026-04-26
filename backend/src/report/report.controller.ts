@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { Role } from '@prisma/client';
+import { Role } from '@prisma/client/index';
 import { Roles } from '../auth/decorators/index.js';
 import { CurrentUser } from '../auth/decorators/index.js';
 import type { UserPayload } from '../auth/interfaces/index.js';

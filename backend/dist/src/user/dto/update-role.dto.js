@@ -11,13 +11,13 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UpdateRoleDto = void 0;
 const class_validator_1 = require("class-validator");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 class UpdateRoleDto {
     role;
 }
 exports.UpdateRoleDto = UpdateRoleDto;
 __decorate([
-    (0, class_validator_1.IsEnum)(client_1.Role),
+    (0, class_validator_1.IsEnum)(index_1.Role),
     __metadata("design:type", String)
 ], UpdateRoleDto.prototype, "role", void 0);
 //# sourceMappingURL=update-role.dto.js.map

@@ -14,7 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UserController = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const user_service_js_1 = require("./user.service.js");
 const index_js_1 = require("./dto/index.js");
 const index_js_2 = require("../auth/decorators/index.js");
@@ -34,6 +34,9 @@ let UserController = class UserController {
     async updateRole(id, dto) {
         return this.userService.updateRole(id, dto.role);
     }
+    async updatePermissions(id, dto) {
+        return this.userService.updatePermissions(id, dto.permissions);
+    }
     async delete(id, currentUser) {
         const user = currentUser;
         await this.userService.delete(id, user.userId);
@@ -43,14 +46,14 @@ let UserController = class UserController {
 exports.UserController = UserController;
 __decorate([
     (0, common_1.Get)(),
-    (0, index_js_2.Roles)(client_1.Role.ADMIN),
+    (0, index_js_2.Roles)(index_1.Role.ADMIN, index_1.Role.MANAGER),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "findAll", null);
 __decorate([
     (0, common_1.Post)(),
-    (0, index_js_2.Roles)(client_1.Role.ADMIN),
+    (0, index_js_2.Roles)(index_1.Role.ADMIN, index_1.Role.MANAGER),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_1.CreateUserDto]),
@@ -58,7 +61,7 @@ __decorate([
 ], UserController.prototype, "create", null);
 __decorate([
     (0, common_1.Patch)(':id/role'),
-    (0, index_js_2.Roles)(client_1.Role.ADMIN),
+    (0, index_js_2.Roles)(index_1.Role.ADMIN, index_1.Role.MANAGER),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -66,8 +69,17 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "updateRole", null);
 __decorate([
+    (0, common_1.Patch)(':id/permissions'),
+    (0, index_js_2.Roles)(index_1.Role.ADMIN, index_1.Role.MANAGER),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, index_js_1.UpdatePermissionsDto]),
+    __metadata("design:returntype", Promise)
+], UserController.prototype, "updatePermissions", null);
+__decorate([
     (0, common_1.Delete)(':id'),
-    (0, index_js_2.Roles)(client_1.Role.ADMIN),
+    (0, index_js_2.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, index_js_3.CurrentUser)()),
     __metadata("design:type", Function),

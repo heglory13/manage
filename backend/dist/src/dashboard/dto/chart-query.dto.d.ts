@@ -1,3 +1,5 @@
 export declare class ChartQueryDto {
-    period?: 'week' | 'month';
+    period?: 'week' | 'month' | 'quarter';
+    startDate?: string;
+    endDate?: string;
 }

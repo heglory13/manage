@@ -13,12 +13,24 @@ exports.ChartQueryDto = void 0;
 const class_validator_1 = require("class-validator");
 class ChartQueryDto {
     period;
+    startDate;
+    endDate;
 }
 exports.ChartQueryDto = ChartQueryDto;
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.IsIn)(['week', 'month']),
+    (0, class_validator_1.IsIn)(['week', 'month', 'quarter']),
     __metadata("design:type", String)
 ], ChartQueryDto.prototype, "period", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], ChartQueryDto.prototype, "startDate", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], ChartQueryDto.prototype, "endDate", void 0);
 //# sourceMappingURL=chart-query.dto.js.map

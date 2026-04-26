@@ -9,6 +9,7 @@ function createMockPrisma() {
     },
     inventoryTransaction: {
       groupBy: jest.fn().mockResolvedValue([]),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     warehouseConfig: {
       findFirst: jest.fn().mockResolvedValue({ id: 'config-1', maxCapacity: 1000 }),
@@ -36,6 +37,7 @@ describe('DashboardService', () => {
 
       expect(result.totalProducts).toBe(25);
       expect(result.totalStock).toBe(500);
+      expect(result.totalInventoryValue).toBe(0);
       expect(result.monthlyStockIn).toBe(200);
       expect(result.monthlyStockOut).toBe(80);
       expect(result.capacityRatio).toBeCloseTo(0.5, 5);
@@ -53,6 +55,7 @@ describe('DashboardService', () => {
 
       expect(result.totalProducts).toBe(0);
       expect(result.totalStock).toBe(0);
+      expect(result.totalInventoryValue).toBe(0);
       expect(result.monthlyStockIn).toBe(0);
       expect(result.monthlyStockOut).toBe(0);
       expect(result.capacityRatio).toBe(0);

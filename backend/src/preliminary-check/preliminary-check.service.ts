@@ -2,7 +2,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PreliminaryCheckStatus } from '@prisma/client';
+import { PreliminaryCheckStatus } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export interface PreliminaryCheckFilters {

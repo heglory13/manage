@@ -1,6 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
+import { InventoryTransactionStatus } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 import * as ExcelJS from 'exceljs';
+import { buildInventoryValuationBuckets } from '../inventory/inventory-valuation.util.js';
 
 export interface ReportFilters {
   categoryId?: string;
@@ -9,74 +15,94 @@ export interface ReportFilters {
 }
 
 export interface NxtReportItem {
-  skuComboId: string;
+  skuComboId: string | null;
   compositeSku: string;
+  productName: string;
   classification: string;
   color: string;
   size: string;
   material: string;
   openingStock: number;
+  openingValue: number;
   totalIn: number;
+  totalInValue: number;
   totalOut: number;
+  totalOutValue: number;
   closingStock: number;
+  closingValue: number;
 }
 
-/**
- * Pure function to compute NXT report from transactions.
- * closingStock = openingStock + totalIn - totalOut
- */
+type LegacySkuComboInput = {
+  id: string;
+  compositeSku: string;
+  classification?: { name?: string | null } | null;
+  color?: { name?: string | null } | null;
+  size?: { name?: string | null } | null;
+  material?: { name?: string | null } | null;
+};
+
+type LegacyTransactionInput = {
+  skuComboId: string | null;
+  type: 'STOCK_IN' | 'STOCK_OUT';
+  quantity: number;
+  purchasePrice?: number | null;
+};
+
 export function computeNxtReport(
-  skuCombos: Array<{
-    id: string;
-    compositeSku: string;
-    classification: { name: string };
-    color: { name: string };
-    size: { name: string };
-    material: { name: string };
-  }>,
-  transactionsBefore: Array<{ skuComboId: string | null; type: string; quantity: number }>,
-  transactionsInPeriod: Array<{ skuComboId: string | null; type: string; quantity: number }>,
+  skuCombos: LegacySkuComboInput[],
+  transactionsBefore: LegacyTransactionInput[],
+  transactionsInPeriod: LegacyTransactionInput[],
 ): NxtReportItem[] {
-  const result: NxtReportItem[] = [];
+  const skuComboMap = new Map(skuCombos.map((combo) => [combo.id, combo]));
+  const syntheticDateBefore = new Date('2000-01-01T00:00:00.000Z');
+  const syntheticDateInPeriod = new Date('2000-01-02T00:00:00.000Z');
 
-  for (const combo of skuCombos) {
-    // Opening stock = sum of all transactions before the period
-    const openingIn = transactionsBefore
-      .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_IN')
-      .reduce((sum, t) => sum + t.quantity, 0);
-    const openingOut = transactionsBefore
-      .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_OUT')
-      .reduce((sum, t) => sum + t.quantity, 0);
-    const openingStock = openingIn - openingOut;
+  const rows = [...transactionsBefore, ...transactionsInPeriod]
+    .filter((transaction): transaction is LegacyTransactionInput & { skuComboId: string } => Boolean(transaction.skuComboId))
+    .map((transaction) => {
+      const combo = skuComboMap.get(transaction.skuComboId);
+      return {
+        id: `${transaction.skuComboId}-${transaction.type}-${transaction.quantity}-${transaction === transactionsBefore[0] ? 'before' : 'period'}`,
+        productId: transaction.skuComboId,
+        productName: combo?.compositeSku ?? transaction.skuComboId,
+        productSku: combo?.compositeSku ?? transaction.skuComboId,
+        skuComboId: transaction.skuComboId,
+        compositeSku: combo?.compositeSku ?? transaction.skuComboId,
+        classification: combo?.classification?.name ?? '-',
+        color: combo?.color?.name ?? '-',
+        size: combo?.size?.name ?? '-',
+        material: combo?.material?.name ?? '-',
+        type: transaction.type,
+        quantity: transaction.quantity,
+        purchasePrice: transaction.purchasePrice ?? 0,
+        createdAt: transactionsBefore.includes(transaction)
+          ? syntheticDateBefore
+          : syntheticDateInPeriod,
+        status: InventoryTransactionStatus.ACTIVE,
+      };
+    });
 
-    // In-period transactions
-    const totalIn = transactionsInPeriod
-      .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_IN')
-      .reduce((sum, t) => sum + t.quantity, 0);
-    const totalOut = transactionsInPeriod
-      .filter((t) => t.skuComboId === combo.id && t.type === 'STOCK_OUT')
-      .reduce((sum, t) => sum + t.quantity, 0);
-
-    const closingStock = openingStock + totalIn - totalOut;
-
-    // Only include combos that have any activity
-    if (openingStock !== 0 || totalIn !== 0 || totalOut !== 0) {
-      result.push({
-        skuComboId: combo.id,
-        compositeSku: combo.compositeSku,
-        classification: combo.classification.name,
-        color: combo.color.name,
-        size: combo.size.name,
-        material: combo.material.name,
-        openingStock,
-        totalIn,
-        totalOut,
-        closingStock,
-      });
-    }
-  }
-
-  return result;
+  return buildInventoryValuationBuckets(
+    rows,
+    new Date('2000-01-02T00:00:00.000Z'),
+    new Date('2000-01-02T23:59:59.999Z'),
+  ).map((bucket) => ({
+    skuComboId: bucket.key.startsWith('product:') ? null : bucket.key,
+    compositeSku: bucket.compositeSku,
+    productName: bucket.productName,
+    classification: bucket.classification,
+    color: bucket.color,
+    size: bucket.size,
+    material: bucket.material,
+    openingStock: bucket.openingQty,
+    openingValue: bucket.openingValue,
+    totalIn: bucket.totalInQty,
+    totalInValue: bucket.totalInValue,
+    totalOut: bucket.totalOutQty,
+    totalOutValue: bucket.totalOutValue,
+    closingStock: bucket.closingQty,
+    closingValue: bucket.closingValue,
+  }));
 }
 
 @Injectable()
@@ -162,35 +188,65 @@ export class ReportService {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    // Get all SKU combos
-    const skuCombos = await this.prisma.skuCombo.findMany({
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: {
+        createdAt: { lte: end },
+        status: InventoryTransactionStatus.ACTIVE,
+      },
       include: {
-        classification: true,
-        color: true,
-        size: true,
-        material: true,
+        product: true,
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
+          },
+        },
       },
+      orderBy: { createdAt: 'asc' },
     });
 
-    // Get transactions before the period (for opening stock)
-    const transactionsBefore = await this.prisma.inventoryTransaction.findMany({
-      where: {
-        createdAt: { lt: start },
-        skuComboId: { not: null },
-      },
-      select: { skuComboId: true, type: true, quantity: true },
-    });
-
-    // Get transactions within the period
-    const transactionsInPeriod = await this.prisma.inventoryTransaction.findMany({
-      where: {
-        createdAt: { gte: start, lte: end },
-        skuComboId: { not: null },
-      },
-      select: { skuComboId: true, type: true, quantity: true },
-    });
-
-    return computeNxtReport(skuCombos, transactionsBefore, transactionsInPeriod);
+    return buildInventoryValuationBuckets(
+      transactions.map((transaction) => ({
+        id: transaction.id,
+        productId: transaction.productId,
+        productName: transaction.product.name,
+        productSku: transaction.product.sku,
+        skuComboId: transaction.skuComboId,
+        compositeSku: transaction.skuCombo?.compositeSku ?? null,
+        classification: transaction.skuCombo?.classification?.name ?? null,
+        color: transaction.skuCombo?.color?.name ?? null,
+        size: transaction.skuCombo?.size?.name ?? null,
+        material: transaction.skuCombo?.material?.name ?? null,
+        type: transaction.type,
+        quantity: transaction.quantity,
+        purchasePrice:
+          transaction.purchasePrice
+            ? Number(transaction.purchasePrice)
+            : Number(transaction.product.price ?? 0),
+        createdAt: transaction.createdAt,
+        status: transaction.status,
+      })),
+      start,
+      end,
+    ).map((bucket) => ({
+      skuComboId: bucket.key.startsWith('product:') ? null : bucket.key,
+      compositeSku: bucket.compositeSku,
+      productName: bucket.productName,
+      classification: bucket.classification,
+      color: bucket.color,
+      size: bucket.size,
+      material: bucket.material,
+      openingStock: bucket.openingQty,
+      openingValue: bucket.openingValue,
+      totalIn: bucket.totalInQty,
+      totalInValue: bucket.totalInValue,
+      totalOut: bucket.totalOutQty,
+      totalOutValue: bucket.totalOutValue,
+      closingStock: bucket.closingQty,
+      closingValue: bucket.closingValue,
+    }));
   }
 
   /**
@@ -208,14 +264,19 @@ export class ReportService {
 
     worksheet.columns = [
       { header: 'SKU', key: 'compositeSku', width: 30 },
+      { header: 'Ten san pham', key: 'productName', width: 30 },
       { header: 'Phân loại', key: 'classification', width: 20 },
       { header: 'Màu', key: 'color', width: 15 },
       { header: 'Size', key: 'size', width: 10 },
       { header: 'Chất liệu', key: 'material', width: 15 },
       { header: 'Tồn đầu kỳ', key: 'openingStock', width: 15 },
+      { header: 'Giá trị tồn đầu', key: 'openingValue', width: 18 },
       { header: 'Nhập', key: 'totalIn', width: 12 },
+      { header: 'Giá trị nhập', key: 'totalInValue', width: 18 },
       { header: 'Xuất', key: 'totalOut', width: 12 },
+      { header: 'Giá trị xuất', key: 'totalOutValue', width: 18 },
       { header: 'Tồn cuối kỳ', key: 'closingStock', width: 15 },
+      { header: 'Giá trị tồn cuối', key: 'closingValue', width: 18 },
     ];
 
     const headerRow = worksheet.getRow(1);
@@ -243,6 +304,8 @@ export class ReportService {
       { header: 'Size', key: 'size', width: 10 },
       { header: 'Chất liệu', key: 'material', width: 15 },
       { header: 'Số lượng', key: 'quantity', width: 12 },
+      { header: 'Giá nhập', key: 'purchasePrice', width: 14 },
+      { header: 'Giá bán', key: 'salePrice', width: 14 },
       { header: 'Tình trạng hàng', key: 'condition', width: 20 },
       { header: 'Vị trí kho', key: 'position', width: 15 },
       { header: 'Loại kho', key: 'warehouseType', width: 15 },
@@ -278,6 +341,16 @@ export class ReportService {
     const size = String(row.size || '').trim();
     const material = String(row.material || '').trim();
     const quantity = Number(row.quantity);
+    const rawPurchasePrice = row.purchasePrice;
+    const rawSalePrice = row.salePrice;
+    const purchasePrice =
+      rawPurchasePrice === undefined || rawPurchasePrice === null || rawPurchasePrice === ''
+        ? null
+        : Number(rawPurchasePrice);
+    const salePrice =
+      rawSalePrice === undefined || rawSalePrice === null || rawSalePrice === ''
+        ? null
+        : Number(rawSalePrice);
 
     if (!classification) {
       errors.push({ row: rowIndex, field: 'Phân loại', message: 'Phân loại là bắt buộc' });
@@ -305,6 +378,14 @@ export class ReportService {
 
     if (isNaN(quantity) || quantity <= 0) {
       errors.push({ row: rowIndex, field: 'Số lượng', message: 'Số lượng phải lớn hơn 0' });
+    }
+
+    if (purchasePrice !== null && (isNaN(purchasePrice) || purchasePrice <= 0)) {
+      errors.push({ row: rowIndex, field: 'Gia nhap', message: 'Gia nhap la bat buoc va phai lon hon 0' });
+    }
+
+    if (salePrice !== null && (isNaN(salePrice) || salePrice <= 0)) {
+      errors.push({ row: rowIndex, field: 'Gia ban', message: 'Gia ban la bat buoc va phai lon hon 0' });
     }
 
     return { valid: errors.length === 0, errors };
@@ -359,10 +440,12 @@ export class ReportService {
         size: row.getCell(3).value,
         material: row.getCell(4).value,
         quantity: row.getCell(5).value,
-        condition: row.getCell(6).value,
-        position: row.getCell(7).value,
-        warehouseType: row.getCell(8).value,
-        note: row.getCell(9).value,
+        purchasePrice: row.getCell(6).value,
+        salePrice: row.getCell(7).value,
+        condition: row.getCell(8).value,
+        position: row.getCell(9).value,
+        warehouseType: row.getCell(10).value,
+        note: row.getCell(11).value,
       });
     });
 
@@ -394,6 +477,14 @@ export class ReportService {
       const sizeName = String(row.size).trim().toLowerCase();
       const materialName = String(row.material).trim().toLowerCase();
       const quantity = Number(row.quantity);
+      const purchasePrice =
+        row.purchasePrice === undefined || row.purchasePrice === null || row.purchasePrice === ''
+          ? 0
+          : Number(row.purchasePrice);
+      const salePrice =
+        row.salePrice === undefined || row.salePrice === null || row.salePrice === ''
+          ? 0
+          : Number(row.salePrice);
       const conditionName = row.condition ? String(row.condition).trim().toLowerCase() : null;
 
       const classificationId = classificationMap.get(classificationName)!;
@@ -411,6 +502,8 @@ export class ReportService {
         sizeId,
         materialId,
         quantity,
+        purchasePrice,
+        salePrice,
         productConditionId,
       };
     });
@@ -445,6 +538,9 @@ export class ReportService {
             productId: product.id,
             type: 'STOCK_IN',
             quantity: op.quantity,
+            purchasePrice: op.purchasePrice,
+            salePrice: op.salePrice,
+            status: InventoryTransactionStatus.ACTIVE,
             userId,
             skuComboId: skuCombo.id,
             productConditionId: op.productConditionId || null,
@@ -456,7 +552,10 @@ export class ReportService {
       txnOps.push(
         this.prisma.product.update({
           where: { id: product.id },
-          data: { stock: { increment: op.quantity } },
+          data: {
+            stock: { increment: op.quantity },
+            price: op.salePrice,
+          },
         }),
       );
 

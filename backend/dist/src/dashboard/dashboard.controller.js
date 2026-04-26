@@ -14,7 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DashboardController = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const index_js_1 = require("../auth/decorators/index.js");
 const dashboard_service_js_1 = require("./dashboard.service.js");
 const index_js_2 = require("./dto/index.js");
@@ -23,8 +23,8 @@ let DashboardController = class DashboardController {
     constructor(dashboardService) {
         this.dashboardService = dashboardService;
     }
-    async getSummary() {
-        return this.dashboardService.getSummary();
+    async getSummary(query) {
+        return this.dashboardService.getSummary(query.startDate, query.endDate);
     }
     async getChart(query) {
         return this.dashboardService.getChartData(query.period ?? 'month');
@@ -45,26 +45,27 @@ let DashboardController = class DashboardController {
         return this.dashboardService.getChartDataV2(query.period ?? 'month');
     }
     async getDetailProducts(query) {
-        return this.dashboardService.getDetailProducts(query.page ?? 1, query.limit ?? 20);
+        return this.dashboardService.getDetailProducts(query.page ?? 1, query.limit ?? 20, query.startDate, query.endDate);
     }
     async getDetailStock(query) {
-        return this.dashboardService.getDetailStock(query.page ?? 1, query.limit ?? 20);
+        return this.dashboardService.getDetailStock(query.page ?? 1, query.limit ?? 20, query.startDate, query.endDate);
     }
     async getDetailTransactions(query) {
-        return this.dashboardService.getDetailTransactions(query.type ?? 'stock_in', query.page ?? 1, query.limit ?? 20);
+        return this.dashboardService.getDetailTransactions(query.type ?? 'stock_in', query.page ?? 1, query.limit ?? 20, query.startDate, query.endDate);
     }
 };
 exports.DashboardController = DashboardController;
 __decorate([
     (0, common_1.Get)('summary'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [index_js_2.ChartQueryDto]),
     __metadata("design:returntype", Promise)
 ], DashboardController.prototype, "getSummary", null);
 __decorate([
     (0, common_1.Get)('chart'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.ChartQueryDto]),
@@ -72,21 +73,21 @@ __decorate([
 ], DashboardController.prototype, "getChart", null);
 __decorate([
     (0, common_1.Get)('alerts/below-min'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], DashboardController.prototype, "getAlertsBelowMin", null);
 __decorate([
     (0, common_1.Get)('alerts/above-max'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], DashboardController.prototype, "getAlertsAboveMax", null);
 __decorate([
     (0, common_1.Get)('top-products'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.TopProductsQueryDto]),
@@ -94,7 +95,7 @@ __decorate([
 ], DashboardController.prototype, "getTopProducts", null);
 __decorate([
     (0, common_1.Get)('top-zones'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.TopZonesQueryDto]),
@@ -102,7 +103,7 @@ __decorate([
 ], DashboardController.prototype, "getTopZones", null);
 __decorate([
     (0, common_1.Get)('chart-v2'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.ChartQueryDto]),
@@ -110,7 +111,7 @@ __decorate([
 ], DashboardController.prototype, "getChartV2", null);
 __decorate([
     (0, common_1.Get)('detail/products'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.DetailQueryDto]),
@@ -118,7 +119,7 @@ __decorate([
 ], DashboardController.prototype, "getDetailProducts", null);
 __decorate([
     (0, common_1.Get)('detail/stock'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.DetailQueryDto]),
@@ -126,7 +127,7 @@ __decorate([
 ], DashboardController.prototype, "getDetailStock", null);
 __decorate([
     (0, common_1.Get)('detail/transactions'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.DetailTransactionsQueryDto]),

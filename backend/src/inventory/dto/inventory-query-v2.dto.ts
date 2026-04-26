@@ -15,6 +15,26 @@ export class InventoryQueryV2Dto {
 
   @IsOptional()
   @IsString()
+  classificationId?: string;
+
+  @IsOptional()
+  @IsString()
+  materialId?: string;
+
+  @IsOptional()
+  @IsString()
+  colorId?: string;
+
+  @IsOptional()
+  @IsString()
+  sizeId?: string;
+
+  @IsOptional()
+  @IsString()
+  storageZoneId?: string;
+
+  @IsOptional()
+  @IsString()
   positionId?: string;
 
   @IsOptional()

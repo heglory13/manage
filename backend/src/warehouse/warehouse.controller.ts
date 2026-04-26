@@ -7,7 +7,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Role } from '@prisma/client/index';
 import { Roles } from '../auth/decorators/index.js';
 import { WarehouseService } from './warehouse.service.js';
 import {

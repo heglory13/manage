@@ -11,12 +11,113 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryService = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const prisma_service_js_1 = require("../prisma/prisma.service.js");
 let InventoryService = class InventoryService {
     prisma;
     constructor(prisma) {
         this.prisma = prisma;
+    }
+    toPrismaDecimal(value) {
+        if (value === undefined || value === null)
+            return undefined;
+        return new index_1.Prisma.Decimal(value);
+    }
+    asNumber(value) {
+        if (value === undefined || value === null)
+            return null;
+        return Number(value);
+    }
+    async getLatestActivePurchasePrice(productId) {
+        const transaction = await this.prisma.inventoryTransaction.findFirst({
+            where: {
+                productId,
+                type: index_1.TransactionType.STOCK_IN,
+                status: index_1.InventoryTransactionStatus.ACTIVE,
+                purchasePrice: { not: null },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { purchasePrice: true },
+        });
+        return this.asNumber(transaction?.purchasePrice) ?? 0;
+    }
+    async ensureCanApplyStockDelta(type, quantity, productId, warehousePositionId, storageZoneId) {
+        if (type !== index_1.TransactionType.STOCK_OUT)
+            return;
+        const [product, position, zone] = await Promise.all([
+            this.prisma.product.findUnique({
+                where: { id: productId },
+                select: { stock: true },
+            }),
+            warehousePositionId
+                ? this.prisma.warehousePosition.findUnique({
+                    where: { id: warehousePositionId },
+                    select: { currentStock: true },
+                })
+                : Promise.resolve(null),
+            storageZoneId
+                ? this.prisma.storageZone.findUnique({
+                    where: { id: storageZoneId },
+                    select: { currentStock: true },
+                })
+                : Promise.resolve(null),
+        ]);
+        if (!product || product.stock < quantity) {
+            throw new common_1.BadRequestException('Khong du ton kho de thuc hien thao tac nay');
+        }
+        if (position && position.currentStock < quantity) {
+            throw new common_1.BadRequestException('Vi tri kho hien tai khong du ton kho');
+        }
+        if (zone && zone.currentStock < quantity) {
+            throw new common_1.BadRequestException('Khu vuc hien tai khong du ton kho');
+        }
+    }
+    async syncPreliminaryCheckStatus(preliminaryCheckId) {
+        if (!preliminaryCheckId)
+            return;
+        const activeLinkedTransactions = await this.prisma.inventoryTransaction.count({
+            where: {
+                preliminaryCheckId,
+                status: index_1.InventoryTransactionStatus.ACTIVE,
+            },
+        });
+        await this.prisma.preliminaryCheck.update({
+            where: { id: preliminaryCheckId },
+            data: {
+                status: activeLinkedTransactions > 0 ? 'COMPLETED' : 'PENDING',
+            },
+        });
+    }
+    async applyTransactionImpact(transaction, mode) {
+        const effectiveType = mode === 'apply'
+            ? transaction.type
+            : transaction.type === index_1.TransactionType.STOCK_IN
+                ? index_1.TransactionType.STOCK_OUT
+                : index_1.TransactionType.STOCK_IN;
+        await this.ensureCanApplyStockDelta(effectiveType, transaction.quantity, transaction.productId, transaction.warehousePositionId, transaction.storageZoneId);
+        const delta = effectiveType === index_1.TransactionType.STOCK_IN
+            ? { increment: transaction.quantity }
+            : { decrement: transaction.quantity };
+        const ops = [
+            this.prisma.product.update({
+                where: { id: transaction.productId },
+                data: { stock: delta },
+            }),
+        ];
+        if (transaction.warehousePositionId) {
+            ops.push(this.prisma.warehousePosition.update({
+                where: { id: transaction.warehousePositionId },
+                data: { currentStock: delta },
+            }));
+        }
+        if (transaction.storageZoneId) {
+            ops.push(this.prisma.storageZone.update({
+                where: { id: transaction.storageZoneId },
+                data: { currentStock: delta },
+            }));
+        }
+        await this.prisma.$transaction(ops);
+        await this.syncPreliminaryCheckStatus(transaction.preliminaryCheckId);
     }
     computeBusinessStatus(product) {
         if (product.isDiscontinued)
@@ -56,16 +157,30 @@ let InventoryService = class InventoryService {
         const actualStockDate = options?.actualStockDate
             ? new Date(options.actualStockDate)
             : new Date();
+        const purchasePrice = options?.purchasePrice ?? 0;
+        const salePrice = options?.salePrice ?? this.asNumber(product.price) ?? 0;
+        if (purchasePrice <= 0) {
+            throw new common_1.BadRequestException('Gia nhap bat buoc va phai lon hon 0');
+        }
+        if (salePrice <= 0) {
+            throw new common_1.BadRequestException('Gia ban bat buoc va phai lon hon 0');
+        }
         const transactionOps = [
             this.prisma.product.update({
                 where: { id: productId },
-                data: { stock: { increment: quantity } },
+                data: {
+                    stock: { increment: quantity },
+                    price: this.toPrismaDecimal(salePrice),
+                },
             }),
             this.prisma.inventoryTransaction.create({
                 data: {
                     productId,
-                    type: client_1.TransactionType.STOCK_IN,
+                    type: index_1.TransactionType.STOCK_IN,
                     quantity,
+                    purchasePrice: this.toPrismaDecimal(purchasePrice),
+                    salePrice: this.toPrismaDecimal(salePrice),
+                    status: index_1.InventoryTransactionStatus.ACTIVE,
                     userId,
                     skuComboId: options?.skuComboId,
                     productConditionId: options?.productConditionId,
@@ -127,6 +242,8 @@ let InventoryService = class InventoryService {
         if (quantity > product.stock) {
             throw new common_1.BadRequestException('Không thể xuất quá số lượng tồn kho hiện tại');
         }
+        const purchasePrice = options?.purchasePrice ?? (await this.getLatestActivePurchasePrice(productId));
+        const salePrice = options?.salePrice ?? this.asNumber(product.price) ?? 0;
         const storageZoneId = options?.storageZoneId;
         const warehousePositionId = options?.warehousePositionId;
         if (warehousePositionId) {
@@ -148,8 +265,11 @@ let InventoryService = class InventoryService {
             this.prisma.inventoryTransaction.create({
                 data: {
                     productId,
-                    type: client_1.TransactionType.STOCK_OUT,
+                    type: index_1.TransactionType.STOCK_OUT,
                     quantity,
+                    purchasePrice: this.toPrismaDecimal(purchasePrice),
+                    salePrice: this.toPrismaDecimal(salePrice),
+                    status: index_1.InventoryTransactionStatus.ACTIVE,
                     userId,
                     skuComboId: options?.skuComboId,
                     productConditionId: options?.productConditionId,
@@ -178,16 +298,65 @@ let InventoryService = class InventoryService {
         const adjustmentNote = options?.reason
             ? `[ADJUSTMENT] ${options.reason}`
             : '[ADJUSTMENT]';
+        const product = await this.prisma.product.findUnique({
+            where: { id: productId },
+            select: { price: true },
+        });
         if (type === 'INCREASE') {
             return this.stockIn(productId, quantity, userId, {
+                purchasePrice: await this.getLatestActivePurchasePrice(productId),
+                salePrice: this.asNumber(product?.price) ?? 0,
                 warehousePositionId: options?.warehousePositionId,
                 notes: adjustmentNote,
             });
         }
         return this.stockOut(productId, quantity, userId, {
+            purchasePrice: await this.getLatestActivePurchasePrice(productId),
+            salePrice: this.asNumber(product?.price) ?? 0,
             warehousePositionId: options?.warehousePositionId,
             notes: adjustmentNote,
         });
+    }
+    async updateTransactionStatus(transactionIds, status) {
+        const transactions = await this.prisma.inventoryTransaction.findMany({
+            where: { id: { in: transactionIds } },
+        });
+        if (transactions.length !== transactionIds.length) {
+            throw new common_1.NotFoundException('Khong tim thay mot hoac nhieu giao dich');
+        }
+        for (const transaction of transactions) {
+            if (transaction.status === status)
+                continue;
+            if (status === index_1.InventoryTransactionStatus.SUSPENDED) {
+                await this.applyTransactionImpact(transaction, 'reverse');
+            }
+            else {
+                await this.applyTransactionImpact(transaction, 'apply');
+            }
+            await this.prisma.inventoryTransaction.update({
+                where: { id: transaction.id },
+                data: { status },
+            });
+        }
+        return { updated: transactions.length, status };
+    }
+    async deleteTransactions(transactionIds) {
+        const transactions = await this.prisma.inventoryTransaction.findMany({
+            where: { id: { in: transactionIds } },
+        });
+        if (transactions.length !== transactionIds.length) {
+            throw new common_1.NotFoundException('Khong tim thay mot hoac nhieu giao dich');
+        }
+        for (const transaction of transactions) {
+            if (transaction.status === index_1.InventoryTransactionStatus.ACTIVE) {
+                await this.applyTransactionImpact(transaction, 'reverse');
+            }
+            await this.prisma.inventoryTransaction.delete({
+                where: { id: transaction.id },
+            });
+            await this.syncPreliminaryCheckStatus(transaction.preliminaryCheckId);
+        }
+        return { deleted: transactions.length };
     }
     async getTransactionHistory(filters) {
         const page = filters.page ?? 1;
@@ -218,19 +387,23 @@ let InventoryService = class InventoryService {
                 : transaction.notes || '';
             const kind = isAdjustment
                 ? 'ADJUSTMENT'
-                : transaction.type === client_1.TransactionType.STOCK_IN
+                : transaction.type === index_1.TransactionType.STOCK_IN
                     ? 'STOCK_IN'
                     : 'STOCK_OUT';
             return {
                 id: transaction.id,
+                productId: transaction.productId,
                 createdAt: transaction.createdAt.toISOString(),
                 actualStockDate: transaction.actualStockDate?.toISOString() ?? null,
                 kind,
                 type: transaction.type,
+                status: transaction.status,
                 quantity: transaction.quantity,
-                signedQuantity: transaction.type === client_1.TransactionType.STOCK_IN
+                signedQuantity: transaction.type === index_1.TransactionType.STOCK_IN
                     ? transaction.quantity
                     : -transaction.quantity,
+                purchasePrice: this.asNumber(transaction.purchasePrice),
+                salePrice: this.asNumber(transaction.salePrice),
                 productName: transaction.product.name,
                 productSku: transaction.product.sku,
                 positionLabel: transaction.warehousePosition?.label ?? null,
@@ -359,12 +532,22 @@ let InventoryService = class InventoryService {
                 },
             ];
         }
-        if (filters.productConditionId) {
-            where.transactions = {
-                some: {
-                    productConditionId: filters.productConditionId,
-                },
+        const transactionSome = {};
+        if (filters.productConditionId)
+            transactionSome.productConditionId = filters.productConditionId;
+        if (filters.storageZoneId)
+            transactionSome.storageZoneId = filters.storageZoneId;
+        if (filters.classificationId || filters.materialId || filters.colorId || filters.sizeId) {
+            transactionSome.skuCombo = {
+                ...(filters.classificationId ? { classificationId: filters.classificationId } : {}),
+                ...(filters.materialId ? { materialId: filters.materialId } : {}),
+                ...(filters.colorId ? { colorId: filters.colorId } : {}),
+                ...(filters.sizeId ? { sizeId: filters.sizeId } : {}),
             };
+        }
+        transactionSome.status = index_1.InventoryTransactionStatus.ACTIVE;
+        if (Object.keys(transactionSome).length > 0) {
+            where.transactions = { some: transactionSome };
         }
         if (filters.positionId) {
             where.warehousePositions = {
@@ -383,6 +566,7 @@ let InventoryService = class InventoryService {
                     warehousePositions: true,
                     transactions: {
                         take: 1,
+                        where: { status: index_1.InventoryTransactionStatus.ACTIVE },
                         orderBy: { createdAt: 'desc' },
                         include: {
                             skuCombo: {
@@ -462,6 +646,23 @@ let InventoryService = class InventoryService {
                 },
             ];
         }
+        const transactionSome = {};
+        if (filters.productConditionId)
+            transactionSome.productConditionId = filters.productConditionId;
+        if (filters.storageZoneId)
+            transactionSome.storageZoneId = filters.storageZoneId;
+        if (filters.classificationId || filters.materialId || filters.colorId || filters.sizeId) {
+            transactionSome.skuCombo = {
+                ...(filters.classificationId ? { classificationId: filters.classificationId } : {}),
+                ...(filters.materialId ? { materialId: filters.materialId } : {}),
+                ...(filters.colorId ? { colorId: filters.colorId } : {}),
+                ...(filters.sizeId ? { sizeId: filters.sizeId } : {}),
+            };
+        }
+        transactionSome.status = index_1.InventoryTransactionStatus.ACTIVE;
+        if (Object.keys(transactionSome).length > 0) {
+            where.transactions = { some: transactionSome };
+        }
         const products = await this.prisma.product.findMany({
             where,
             include: {
@@ -469,6 +670,7 @@ let InventoryService = class InventoryService {
                 warehousePositions: true,
                 transactions: {
                     take: 1,
+                    where: { status: index_1.InventoryTransactionStatus.ACTIVE },
                     orderBy: { createdAt: 'desc' },
                     include: {
                         skuCombo: {

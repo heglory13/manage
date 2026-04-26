@@ -15,6 +15,7 @@ const auth_controller_js_1 = require("./auth.controller.js");
 const auth_service_js_1 = require("./auth.service.js");
 const jwt_strategy_js_1 = require("./strategies/jwt.strategy.js");
 const jwt_auth_guard_js_1 = require("./guards/jwt-auth.guard.js");
+const user_module_js_1 = require("../user/user.module.js");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
@@ -22,6 +23,7 @@ exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
         imports: [
             config_1.ConfigModule,
+            user_module_js_1.UserModule,
             passport_1.PassportModule.register({ defaultStrategy: 'jwt' }),
             jwt_1.JwtModule.registerAsync({
                 imports: [config_1.ConfigModule],

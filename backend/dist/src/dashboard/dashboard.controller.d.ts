@@ -3,7 +3,7 @@ import { ChartQueryDto, TopProductsQueryDto, TopZonesQueryDto, DetailQueryDto, D
 export declare class DashboardController {
     private readonly dashboardService;
     constructor(dashboardService: DashboardService);
-    getSummary(): Promise<import("./dashboard.service.js").DashboardSummary>;
+    getSummary(query: ChartQueryDto): Promise<import("./dashboard.service.js").DashboardSummary>;
     getChart(query: ChartQueryDto): Promise<import("./dashboard.service.js").ChartData>;
     getAlertsBelowMin(): Promise<import("./dashboard.service.js").AlertProduct[]>;
     getAlertsAboveMax(): Promise<import("./dashboard.service.js").AlertProduct[]>;

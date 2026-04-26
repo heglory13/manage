@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 import { InventoryService } from './inventory.service.js';
-import { StockInDto, StockOutDto, StockAdjustDto, InventoryQueryDto, InventoryQueryV2Dto, TransactionHistoryQueryDto } from './dto/index.js';
+import { DeleteTransactionsDto, StockAdjustDto, StockInDto, StockOutDto, InventoryQueryDto, InventoryQueryV2Dto, TransactionHistoryQueryDto, TransactionStatusActionDto } from './dto/index.js';
 export declare class InventoryController {
     private readonly inventoryService;
     constructor(inventoryService: InventoryService);
@@ -9,6 +9,9 @@ export declare class InventoryController {
         createdAt: Date;
         type: import(".prisma/client").$Enums.TransactionType;
         quantity: number;
+        purchasePrice: import("@prisma/client/runtime/library").Decimal | null;
+        salePrice: import("@prisma/client/runtime/library").Decimal | null;
+        status: import(".prisma/client").$Enums.InventoryTransactionStatus;
         actualStockDate: Date | null;
         notes: string | null;
         productId: string;
@@ -24,6 +27,9 @@ export declare class InventoryController {
         createdAt: Date;
         type: import(".prisma/client").$Enums.TransactionType;
         quantity: number;
+        purchasePrice: import("@prisma/client/runtime/library").Decimal | null;
+        salePrice: import("@prisma/client/runtime/library").Decimal | null;
+        status: import(".prisma/client").$Enums.InventoryTransactionStatus;
         actualStockDate: Date | null;
         notes: string | null;
         productId: string;
@@ -39,6 +45,9 @@ export declare class InventoryController {
         createdAt: Date;
         type: import(".prisma/client").$Enums.TransactionType;
         quantity: number;
+        purchasePrice: import("@prisma/client/runtime/library").Decimal | null;
+        salePrice: import("@prisma/client/runtime/library").Decimal | null;
+        status: import(".prisma/client").$Enums.InventoryTransactionStatus;
         actualStockDate: Date | null;
         notes: string | null;
         productId: string;
@@ -48,6 +57,13 @@ export declare class InventoryController {
         storageZoneId: string | null;
         warehousePositionId: string | null;
         preliminaryCheckId: string | null;
+    }>;
+    updateTransactionStatus(dto: TransactionStatusActionDto, currentUser: Record<string, unknown>): Promise<{
+        updated: number;
+        status: import(".prisma/client").$Enums.InventoryTransactionStatus;
+    }>;
+    deleteTransactions(dto: DeleteTransactionsDto, currentUser: Record<string, unknown>): Promise<{
+        deleted: number;
     }>;
     getInventory(query: InventoryQueryDto): Promise<import("./inventory.service.js").PaginatedResponse<unknown>>;
     getCapacity(): Promise<import("./inventory.service.js").CapacityInfo>;

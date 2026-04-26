@@ -18,6 +18,11 @@ enum TransactionType {
   STOCK_OUT
 }
 
+enum InventoryTransactionStatus {
+  ACTIVE
+  SUSPENDED
+}
+
 enum StocktakingStatus {
   CHECKING   // Đang kiểm kê
   PENDING    // Chờ duyệt
@@ -36,6 +41,7 @@ model User {
   password     String   // bcrypt hashed
   name         String
   role         Role     @default(STAFF)
+  permissions  Json?
   refreshToken String?  // hashed refresh token
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -83,6 +89,9 @@ model InventoryTransaction {
   productId            String
   type                 TransactionType
   quantity             Int
+  purchasePrice        Decimal?        @db.Decimal(15, 2)
+  salePrice            Decimal?        @db.Decimal(15, 2)
+  status               InventoryTransactionStatus @default(ACTIVE)
   userId               String
   skuComboId           String?
   productConditionId   String?
@@ -103,6 +112,7 @@ model InventoryTransaction {
 
   @@index([productId, createdAt])
   @@index([type, createdAt])
+  @@index([status, createdAt])
   @@map("inventory_transactions")
 }
 

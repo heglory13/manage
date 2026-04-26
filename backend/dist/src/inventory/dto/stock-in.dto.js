@@ -14,6 +14,8 @@ const class_validator_1 = require("class-validator");
 class StockInDto {
     productId;
     quantity;
+    purchasePrice;
+    salePrice;
     skuComboId;
     productConditionId;
     storageZoneId;
@@ -30,9 +32,19 @@ __decorate([
 ], StockInDto.prototype, "productId", void 0);
 __decorate([
     (0, class_validator_1.IsNumber)(),
-    (0, class_validator_1.Min)(1, { message: 'Số lượng nhập kho phải lớn hơn 0' }),
+    (0, class_validator_1.Min)(1, { message: 'So luong nhap kho phai lon hon 0' }),
     __metadata("design:type", Number)
 ], StockInDto.prototype, "quantity", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(1, { message: 'Gia nhap phai lon hon 0' }),
+    __metadata("design:type", Number)
+], StockInDto.prototype, "purchasePrice", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(1, { message: 'Gia ban phai lon hon 0' }),
+    __metadata("design:type", Number)
+], StockInDto.prototype, "salePrice", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),

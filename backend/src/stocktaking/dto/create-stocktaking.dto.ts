@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsDateString,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -33,6 +34,10 @@ export class CreateStocktakingDto {
   @IsArray()
   @IsString({ each: true })
   productIds?: string[];
+
+  @IsOptional()
+  @IsDateString()
+  cutoffTime?: string;
 }
 
 export class SubmitStocktakingItemDto {

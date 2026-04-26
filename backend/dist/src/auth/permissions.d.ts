@@ -1,0 +1,10 @@
+import { Role } from '@prisma/client/index';
+export declare const permissionModules: readonly ["dashboard", "inventory", "preliminaryChecks", "transactions", "audit", "warehouse", "input", "activityLogs", "users", "generalSettings"];
+export declare const permissionActions: readonly ["view", "create", "save", "edit", "delete"];
+export type PermissionModule = (typeof permissionModules)[number];
+export type PermissionAction = (typeof permissionActions)[number];
+export type PermissionFlags = Record<PermissionAction, boolean>;
+export type PermissionState = Record<PermissionModule, PermissionFlags>;
+export declare function createDefaultPermissions(role: Role): PermissionState;
+export declare function normalizePermissions(value: unknown, role: Role): PermissionState;
+export declare function hasPermission(permissions: PermissionState | undefined, moduleKey: PermissionModule, action: PermissionAction): boolean;

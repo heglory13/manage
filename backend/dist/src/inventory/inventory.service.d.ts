@@ -1,4 +1,4 @@
-import { InventoryTransaction, TransactionType } from '@prisma/client';
+import { InventoryTransaction, InventoryTransactionStatus, TransactionType } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 export interface CapacityInfo {
     currentTotal: number;
@@ -23,12 +23,16 @@ export interface PaginatedResponse<T> {
 }
 export interface InventoryTransactionHistoryItem {
     id: string;
+    productId: string;
     createdAt: string;
     actualStockDate: string | null;
     kind: 'ALL' | 'STOCK_IN' | 'STOCK_OUT' | 'ADJUSTMENT';
     type: TransactionType;
+    status: InventoryTransactionStatus;
     quantity: number;
     signedQuantity: number;
+    purchasePrice: number | null;
+    salePrice: number | null;
     productName: string;
     productSku: string;
     positionLabel: string | null;
@@ -38,12 +42,20 @@ export interface InventoryTransactionHistoryItem {
 export declare class InventoryService {
     private readonly prisma;
     constructor(prisma: PrismaService);
+    private toPrismaDecimal;
+    private asNumber;
+    private getLatestActivePurchasePrice;
+    private ensureCanApplyStockDelta;
+    private syncPreliminaryCheckStatus;
+    private applyTransactionImpact;
     computeBusinessStatus(product: {
         stock: number;
         minThreshold: number;
         isDiscontinued: boolean;
     }): 'CON_HANG' | 'HET_HANG' | 'SAP_HET' | 'NGUNG_KD';
     stockIn(productId: string, quantity: number, userId: string, options?: {
+        purchasePrice?: number;
+        salePrice?: number;
         skuComboId?: string;
         productConditionId?: string;
         storageZoneId?: string;
@@ -53,6 +65,8 @@ export declare class InventoryService {
         notes?: string;
     }): Promise<InventoryTransaction>;
     stockOut(productId: string, quantity: number, userId: string, options?: {
+        purchasePrice?: number;
+        salePrice?: number;
         skuComboId?: string;
         productConditionId?: string;
         storageZoneId?: string;
@@ -63,6 +77,13 @@ export declare class InventoryService {
         warehousePositionId?: string;
         reason?: string;
     }): Promise<InventoryTransaction>;
+    updateTransactionStatus(transactionIds: string[], status: InventoryTransactionStatus): Promise<{
+        updated: number;
+        status: import(".prisma/client").$Enums.InventoryTransactionStatus;
+    }>;
+    deleteTransactions(transactionIds: string[]): Promise<{
+        deleted: number;
+    }>;
     getTransactionHistory(filters: {
         kind?: string;
         page?: number;
@@ -75,6 +96,11 @@ export declare class InventoryService {
         categoryId?: string;
         businessStatus?: string;
         productConditionId?: string;
+        classificationId?: string;
+        materialId?: string;
+        colorId?: string;
+        sizeId?: string;
+        storageZoneId?: string;
         positionId?: string;
         startDate?: string;
         endDate?: string;
@@ -85,6 +111,12 @@ export declare class InventoryService {
     exportExcelV2(filters: {
         categoryId?: string;
         businessStatus?: string;
+        productConditionId?: string;
+        classificationId?: string;
+        materialId?: string;
+        colorId?: string;
+        sizeId?: string;
+        storageZoneId?: string;
         search?: string;
     }): Promise<Buffer>;
 }

@@ -30,6 +30,7 @@ const preliminary_check_module_js_1 = require("./preliminary-check/preliminary-c
 const saved_filter_module_js_1 = require("./saved-filter/saved-filter.module.js");
 const activity_log_module_js_1 = require("./activity-log/activity-log.module.js");
 const activity_log_interceptor_js_1 = require("./activity-log/activity-log.interceptor.js");
+const general_settings_module_js_1 = require("./general-settings/general-settings.module.js");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -57,6 +58,7 @@ exports.AppModule = AppModule = __decorate([
             preliminary_check_module_js_1.PreliminaryCheckModule,
             saved_filter_module_js_1.SavedFilterModule,
             activity_log_module_js_1.ActivityLogModule,
+            general_settings_module_js_1.GeneralSettingsModule,
         ],
         controllers: [app_controller_js_1.AppController],
         providers: [

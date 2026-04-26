@@ -6,8 +6,16 @@ export class StockInDto {
   productId!: string;
 
   @IsNumber()
-  @Min(1, { message: 'Số lượng nhập kho phải lớn hơn 0' })
+  @Min(1, { message: 'So luong nhap kho phai lon hon 0' })
   quantity!: number;
+
+  @IsNumber()
+  @Min(1, { message: 'Gia nhap phai lon hon 0' })
+  purchasePrice!: number;
+
+  @IsNumber()
+  @Min(1, { message: 'Gia ban phai lon hon 0' })
+  salePrice!: number;
 
   @IsOptional()
   @IsString()

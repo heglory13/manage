@@ -15,6 +15,7 @@ const config_1 = require("@nestjs/config");
 const passport_1 = require("@nestjs/passport");
 const passport_jwt_1 = require("passport-jwt");
 const prisma_service_js_1 = require("../../prisma/prisma.service.js");
+const permissions_js_1 = require("../permissions.js");
 let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(passport_jwt_1.Strategy) {
     prisma;
     constructor(configService, prisma) {
@@ -36,6 +37,7 @@ let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(pas
             userId: user.id,
             email: user.email,
             role: user.role,
+            permissions: (0, permissions_js_1.normalizePermissions)(user.permissions, user.role),
         };
     }
 };

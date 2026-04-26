@@ -21,6 +21,7 @@ import { PreliminaryCheckModule } from './preliminary-check/preliminary-check.mo
 import { SavedFilterModule } from './saved-filter/saved-filter.module.js';
 import { ActivityLogModule } from './activity-log/activity-log.module.js';
 import { ActivityLogInterceptor } from './activity-log/activity-log.interceptor.js';
+import { GeneralSettingsModule } from './general-settings/general-settings.module.js';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { ActivityLogInterceptor } from './activity-log/activity-log.interceptor.
     PreliminaryCheckModule,
     SavedFilterModule,
     ActivityLogModule,
+    GeneralSettingsModule,
   ],
   controllers: [AppController],
   providers: [

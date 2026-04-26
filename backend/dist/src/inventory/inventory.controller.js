@@ -14,9 +14,11 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryController = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const common_2 = require("@nestjs/common");
+const index_1 = require("@prisma/client/index");
 const index_js_1 = require("../auth/decorators/index.js");
 const index_js_2 = require("../auth/decorators/index.js");
+const permissions_js_1 = require("../auth/permissions.js");
 const inventory_service_js_1 = require("./inventory.service.js");
 const index_js_3 = require("./dto/index.js");
 let InventoryController = class InventoryController {
@@ -27,6 +29,8 @@ let InventoryController = class InventoryController {
     async stockIn(dto, currentUser) {
         const user = currentUser;
         return this.inventoryService.stockIn(dto.productId, dto.quantity, user.userId, {
+            purchasePrice: dto.purchasePrice,
+            salePrice: dto.salePrice,
             skuComboId: dto.skuComboId,
             productConditionId: dto.productConditionId,
             storageZoneId: dto.storageZoneId,
@@ -53,6 +57,20 @@ let InventoryController = class InventoryController {
             reason: dto.reason,
         });
     }
+    async updateTransactionStatus(dto, currentUser) {
+        const user = currentUser;
+        if (!(0, permissions_js_1.hasPermission)(user.permissions, 'transactions', 'edit')) {
+            throw new common_2.ForbiddenException('Ban khong co quyen sua giao dich');
+        }
+        return this.inventoryService.updateTransactionStatus(dto.transactionIds, dto.status);
+    }
+    async deleteTransactions(dto, currentUser) {
+        const user = currentUser;
+        if (!(0, permissions_js_1.hasPermission)(user.permissions, 'transactions', 'delete')) {
+            throw new common_2.ForbiddenException('Ban khong co quyen xoa giao dich');
+        }
+        return this.inventoryService.deleteTransactions(dto.transactionIds);
+    }
     async getInventory(query) {
         return this.inventoryService.getInventory({
             categoryId: query.categoryId,
@@ -71,6 +89,11 @@ let InventoryController = class InventoryController {
             categoryId: query.categoryId,
             businessStatus: query.businessStatus,
             productConditionId: query.productConditionId,
+            classificationId: query.classificationId,
+            materialId: query.materialId,
+            colorId: query.colorId,
+            sizeId: query.sizeId,
+            storageZoneId: query.storageZoneId,
             positionId: query.positionId,
             startDate: query.startDate,
             endDate: query.endDate,
@@ -90,6 +113,12 @@ let InventoryController = class InventoryController {
         const buffer = await this.inventoryService.exportExcelV2({
             categoryId: query.categoryId,
             businessStatus: query.businessStatus,
+            productConditionId: query.productConditionId,
+            classificationId: query.classificationId,
+            materialId: query.materialId,
+            colorId: query.colorId,
+            sizeId: query.sizeId,
+            storageZoneId: query.storageZoneId,
             search: query.search,
         });
         res.set({
@@ -126,6 +155,24 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "adjustStock", null);
 __decorate([
+    (0, common_1.Patch)('transactions/status'),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, index_js_2.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [index_js_3.TransactionStatusActionDto, Object]),
+    __metadata("design:returntype", Promise)
+], InventoryController.prototype, "updateTransactionStatus", null);
+__decorate([
+    (0, common_1.Delete)('transactions'),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, index_js_2.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [index_js_3.DeleteTransactionsDto, Object]),
+    __metadata("design:returntype", Promise)
+], InventoryController.prototype, "deleteTransactions", null);
+__decorate([
     (0, common_1.Get)(),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
@@ -154,7 +201,7 @@ __decorate([
 ], InventoryController.prototype, "getTransactionHistory", null);
 __decorate([
     (0, common_1.Get)('export-v2'),
-    (0, index_js_1.Roles)(client_1.Role.MANAGER, client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.MANAGER, index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __param(1, (0, common_1.Res)()),
     __metadata("design:type", Function),

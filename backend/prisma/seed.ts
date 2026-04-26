@@ -1,4 +1,10 @@
-import { PrismaClient, Role, TransactionType, StocktakingStatus, PreliminaryCheckStatus } from '@prisma/client';
+import {
+  PrismaClient,
+  Role,
+  TransactionType,
+  StocktakingStatus,
+  PreliminaryCheckStatus,
+} from '@prisma/client/index';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -425,6 +431,8 @@ async function main() {
     const positionId = pick(positionIds);
     const stockInDate = new Date(createdAt);
     stockInDate.setDate(stockInDate.getDate() + randInt(0, 3));
+    const salePrice = randInt(150000, 7500000);
+    const purchasePrice = Math.max(50000, Math.round(salePrice * (0.55 + Math.random() * 0.25)));
 
     try {
       await prisma.inventoryTransaction.create({
@@ -432,6 +440,8 @@ async function main() {
           productId: product.id,
           type: isStockIn ? TransactionType.STOCK_IN : TransactionType.STOCK_OUT,
           quantity,
+          purchasePrice,
+          salePrice,
           userId: user.id,
           skuComboId: skuCombo.id,
           productConditionId: condition,

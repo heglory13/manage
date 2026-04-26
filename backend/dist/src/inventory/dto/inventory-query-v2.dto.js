@@ -15,6 +15,11 @@ class InventoryQueryV2Dto {
     categoryId;
     businessStatus;
     productConditionId;
+    classificationId;
+    materialId;
+    colorId;
+    sizeId;
+    storageZoneId;
     positionId;
     startDate;
     endDate;
@@ -38,6 +43,31 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], InventoryQueryV2Dto.prototype, "productConditionId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], InventoryQueryV2Dto.prototype, "classificationId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], InventoryQueryV2Dto.prototype, "materialId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], InventoryQueryV2Dto.prototype, "colorId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], InventoryQueryV2Dto.prototype, "sizeId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], InventoryQueryV2Dto.prototype, "storageZoneId", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),

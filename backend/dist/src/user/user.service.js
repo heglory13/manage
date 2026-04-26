@@ -45,11 +45,19 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.UserService = void 0;
 const common_1 = require("@nestjs/common");
 const bcrypt = __importStar(require("bcrypt"));
+const permissions_js_1 = require("../auth/permissions.js");
 const prisma_service_js_1 = require("../prisma/prisma.service.js");
 let UserService = class UserService {
     prisma;
     constructor(prisma) {
         this.prisma = prisma;
+    }
+    sanitizeUser(user) {
+        const { password: _, refreshToken: __, ...result } = user;
+        return {
+            ...result,
+            permissions: (0, permissions_js_1.normalizePermissions)(result.permissions, result.role),
+        };
     }
     async create(dto) {
         const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -59,10 +67,10 @@ let UserService = class UserService {
                 password: hashedPassword,
                 name: dto.name,
                 role: dto.role,
+                permissions: (0, permissions_js_1.normalizePermissions)(undefined, dto.role),
             },
         });
-        const { password: _, refreshToken: __, ...result } = user;
-        return result;
+        return this.sanitizeUser(user);
     }
     async updateRole(id, role) {
         const user = await this.prisma.user.findUnique({ where: { id } });
@@ -71,10 +79,25 @@ let UserService = class UserService {
         }
         const updated = await this.prisma.user.update({
             where: { id },
-            data: { role },
+            data: {
+                role,
+                permissions: (0, permissions_js_1.normalizePermissions)(user.permissions, role),
+            },
         });
-        const { password: _, refreshToken: __, ...result } = updated;
-        return result;
+        return this.sanitizeUser(updated);
+    }
+    async updatePermissions(id, permissions) {
+        const user = await this.prisma.user.findUnique({ where: { id } });
+        if (!user) {
+            throw new common_1.NotFoundException('User not found');
+        }
+        const updated = await this.prisma.user.update({
+            where: { id },
+            data: {
+                permissions: (0, permissions_js_1.normalizePermissions)(permissions, user.role),
+            },
+        });
+        return this.sanitizeUser(updated);
     }
     async delete(id, currentUserId) {
         if (id === currentUserId) {
@@ -90,13 +113,17 @@ let UserService = class UserService {
         const users = await this.prisma.user.findMany({
             orderBy: { createdAt: 'desc' },
         });
-        return users.map(({ password: _, refreshToken: __, ...rest }) => rest);
+        return users.map((user) => this.sanitizeUser(user));
     }
     async findByEmail(email) {
         return this.prisma.user.findUnique({ where: { email } });
     }
     async findById(id) {
         return this.prisma.user.findUnique({ where: { id } });
+    }
+    async getSafeById(id) {
+        const user = await this.findById(id);
+        return user ? this.sanitizeUser(user) : null;
     }
 };
 exports.UserService = UserService;

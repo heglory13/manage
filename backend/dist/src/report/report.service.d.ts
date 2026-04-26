@@ -5,41 +5,45 @@ export interface ReportFilters {
     endDate?: string;
 }
 export interface NxtReportItem {
-    skuComboId: string;
+    skuComboId: string | null;
     compositeSku: string;
+    productName: string;
     classification: string;
     color: string;
     size: string;
     material: string;
     openingStock: number;
+    openingValue: number;
     totalIn: number;
+    totalInValue: number;
     totalOut: number;
+    totalOutValue: number;
     closingStock: number;
+    closingValue: number;
 }
-export declare function computeNxtReport(skuCombos: Array<{
+type LegacySkuComboInput = {
     id: string;
     compositeSku: string;
-    classification: {
-        name: string;
-    };
-    color: {
-        name: string;
-    };
-    size: {
-        name: string;
-    };
-    material: {
-        name: string;
-    };
-}>, transactionsBefore: Array<{
+    classification?: {
+        name?: string | null;
+    } | null;
+    color?: {
+        name?: string | null;
+    } | null;
+    size?: {
+        name?: string | null;
+    } | null;
+    material?: {
+        name?: string | null;
+    } | null;
+};
+type LegacyTransactionInput = {
     skuComboId: string | null;
-    type: string;
+    type: 'STOCK_IN' | 'STOCK_OUT';
     quantity: number;
-}>, transactionsInPeriod: Array<{
-    skuComboId: string | null;
-    type: string;
-    quantity: number;
-}>): NxtReportItem[];
+    purchasePrice?: number | null;
+};
+export declare function computeNxtReport(skuCombos: LegacySkuComboInput[], transactionsBefore: LegacyTransactionInput[], transactionsInPeriod: LegacyTransactionInput[]): NxtReportItem[];
 export declare class ReportService {
     private readonly prisma;
     constructor(prisma: PrismaService);
@@ -72,3 +76,4 @@ export declare class ReportService {
         }>;
     }>;
 }
+export {};

@@ -1,4 +1,4 @@
-import { Product } from '@prisma/client';
+import { Product } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { SkuGeneratorService } from './sku-generator.service.js';
 import { CreateProductDto, UpdateProductDto, ProductQueryDto } from './dto/index.js';

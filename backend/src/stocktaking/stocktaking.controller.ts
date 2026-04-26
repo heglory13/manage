@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Role } from '@prisma/client/index';
 import { CurrentUser } from '../auth/decorators/index.js';
 import { Roles } from '../auth/decorators/index.js';
 import type { UserPayload } from '../auth/interfaces/index.js';
@@ -16,7 +16,12 @@ export class StocktakingController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.stocktakingService.create(dto.mode, user.userId, dto.productIds);
+    return this.stocktakingService.create(
+      dto.mode,
+      user.userId,
+      dto.productIds,
+      dto.cutoffTime,
+    );
   }
 
   @Patch(':id/submit')

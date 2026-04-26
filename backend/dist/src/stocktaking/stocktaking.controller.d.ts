@@ -169,8 +169,8 @@ export declare class StocktakingController {
     }>;
     getStatusHistory(id: string): Promise<{
         id: string;
-        note: string | null;
         status: import(".prisma/client").$Enums.StocktakingStatus;
+        note: string | null;
         recordId: string;
         changedBy: string | null;
         changedAt: Date;
@@ -208,8 +208,8 @@ export declare class StocktakingController {
         })[];
         statusHistory: {
             id: string;
-            note: string | null;
             status: import(".prisma/client").$Enums.StocktakingStatus;
+            note: string | null;
             recordId: string;
             changedBy: string | null;
             changedAt: Date;

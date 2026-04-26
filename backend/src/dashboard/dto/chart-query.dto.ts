@@ -1,8 +1,16 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class ChartQueryDto {
   @IsOptional()
   @IsString()
-  @IsIn(['week', 'month'])
-  period?: 'week' | 'month';
+  @IsIn(['week', 'month', 'quarter'])
+  period?: 'week' | 'month' | 'quarter';
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 }

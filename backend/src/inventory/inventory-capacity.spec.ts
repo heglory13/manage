@@ -26,6 +26,7 @@ describe('InventoryService - Storage Zone Capacity', () => {
         update: jest.fn(),
       },
       inventoryTransaction: {
+        findFirst: jest.fn().mockResolvedValue({ purchasePrice: 100 }),
         create: jest.fn().mockImplementation(({ data }) => ({
           id: 'tx-1',
           ...data,

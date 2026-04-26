@@ -1,5 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Role } from '@prisma/client/index';
 import { Roles } from '../auth/decorators/index.js';
 import { DashboardService } from './dashboard.service.js';
 import { ChartQueryDto, TopProductsQueryDto, TopZonesQueryDto, DetailQueryDto, DetailTransactionsQueryDto } from './dto/index.js';
@@ -10,8 +10,8 @@ export class DashboardController {
 
   @Get('summary')
   @Roles(Role.MANAGER, Role.ADMIN)
-  async getSummary() {
-    return this.dashboardService.getSummary();
+  async getSummary(@Query() query: ChartQueryDto) {
+    return this.dashboardService.getSummary(query.startDate, query.endDate);
   }
 
   @Get('chart')
@@ -53,13 +53,23 @@ export class DashboardController {
   @Get('detail/products')
   @Roles(Role.MANAGER, Role.ADMIN)
   async getDetailProducts(@Query() query: DetailQueryDto) {
-    return this.dashboardService.getDetailProducts(query.page ?? 1, query.limit ?? 20);
+    return this.dashboardService.getDetailProducts(
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.startDate,
+      query.endDate,
+    );
   }
 
   @Get('detail/stock')
   @Roles(Role.MANAGER, Role.ADMIN)
   async getDetailStock(@Query() query: DetailQueryDto) {
-    return this.dashboardService.getDetailStock(query.page ?? 1, query.limit ?? 20);
+    return this.dashboardService.getDetailStock(
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.startDate,
+      query.endDate,
+    );
   }
 
   @Get('detail/transactions')
@@ -69,6 +79,8 @@ export class DashboardController {
       query.type ?? 'stock_in',
       query.page ?? 1,
       query.limit ?? 20,
+      query.startDate,
+      query.endDate,
     );
   }
 }

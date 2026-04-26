@@ -11,7 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PreliminaryCheckService = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const prisma_service_js_1 = require("../prisma/prisma.service.js");
 let PreliminaryCheckService = class PreliminaryCheckService {
     prisma;
@@ -40,7 +40,7 @@ let PreliminaryCheckService = class PreliminaryCheckService {
                 warehouseTypeId: dto.warehouseTypeId || null,
                 imageUrl: dto.imageUrl || null,
                 note: dto.note || null,
-                status: client_1.PreliminaryCheckStatus.PENDING,
+                status: index_1.PreliminaryCheckStatus.PENDING,
                 createdBy: userId,
             },
             include: {
@@ -107,7 +107,7 @@ let PreliminaryCheckService = class PreliminaryCheckService {
         if (!check) {
             throw new common_1.NotFoundException('Phiếu kiểm sơ bộ không tồn tại');
         }
-        if (check.status !== client_1.PreliminaryCheckStatus.PENDING) {
+        if (check.status !== index_1.PreliminaryCheckStatus.PENDING) {
             throw new common_1.NotFoundException('Phiếu đã được xử lý trước đó');
         }
         return this.prisma.preliminaryCheck.update({

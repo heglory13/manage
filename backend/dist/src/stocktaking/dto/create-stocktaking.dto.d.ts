@@ -6,6 +6,7 @@ export declare class CreateStocktakingItemDto {
 export declare class CreateStocktakingDto {
     mode: 'full' | 'selected';
     productIds?: string[];
+    cutoffTime?: string;
 }
 export declare class SubmitStocktakingItemDto {
     itemId: string;

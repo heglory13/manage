@@ -33,9 +33,9 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const bcrypt = __importStar(require("bcrypt"));
-const prisma = new client_1.PrismaClient();
+const prisma = new index_1.PrismaClient();
 function pick(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -70,19 +70,19 @@ async function main() {
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
     const hashedPassword = await bcrypt.hash('admin123', 10);
     const adminUser = await getOrCreate('user', { email: 'admin@inventory.com' }, {
-        email: 'admin@inventory.com', password: hashedPassword, name: 'Nguyễn Văn A', role: client_1.Role.ADMIN,
+        email: 'admin@inventory.com', password: hashedPassword, name: 'Nguyễn Văn A', role: index_1.Role.ADMIN,
     });
     const managerUser = await getOrCreate('user', { email: 'manager@inventory.com' }, {
-        email: 'manager@inventory.com', password: hashedPassword, name: 'Trần Thị B', role: client_1.Role.MANAGER,
+        email: 'manager@inventory.com', password: hashedPassword, name: 'Trần Thị B', role: index_1.Role.MANAGER,
     });
     const staff1 = await getOrCreate('user', { email: 'staff1@inventory.com' }, {
-        email: 'staff1@inventory.com', password: hashedPassword, name: 'Lê Minh C', role: client_1.Role.STAFF,
+        email: 'staff1@inventory.com', password: hashedPassword, name: 'Lê Minh C', role: index_1.Role.STAFF,
     });
     const staff2 = await getOrCreate('user', { email: 'staff2@inventory.com' }, {
-        email: 'staff2@inventory.com', password: hashedPassword, name: 'Phạm Thị D', role: client_1.Role.STAFF,
+        email: 'staff2@inventory.com', password: hashedPassword, name: 'Phạm Thị D', role: index_1.Role.STAFF,
     });
     const staff3 = await getOrCreate('user', { email: 'staff3@inventory.com' }, {
-        email: 'staff3@inventory.com', password: hashedPassword, name: 'Hoàng Văn E', role: client_1.Role.STAFF,
+        email: 'staff3@inventory.com', password: hashedPassword, name: 'Hoàng Văn E', role: index_1.Role.STAFF,
     });
     const users = [adminUser, managerUser, staff1, staff2, staff3];
     console.log(`✅ 5 users created/loaded`);
@@ -367,7 +367,7 @@ async function main() {
     const allSkus = await prisma.skuCombo.findMany({ take: 500 });
     const zoneKeys = Object.values(zones);
     const conditionKeys = Object.values(conditions);
-    const staffUsers = users.filter(u => u.role === client_1.Role.STAFF || u.role === client_1.Role.MANAGER);
+    const staffUsers = users.filter(u => u.role === index_1.Role.STAFF || u.role === index_1.Role.MANAGER);
     const positionIds = [...Object.values(gridPositions), ...Object.values(freePositions)];
     let txnCount = 0;
     for (let i = 0; i < 250; i++) {
@@ -382,12 +382,16 @@ async function main() {
         const positionId = pick(positionIds);
         const stockInDate = new Date(createdAt);
         stockInDate.setDate(stockInDate.getDate() + randInt(0, 3));
+        const salePrice = randInt(150000, 7500000);
+        const purchasePrice = Math.max(50000, Math.round(salePrice * (0.55 + Math.random() * 0.25)));
         try {
             await prisma.inventoryTransaction.create({
                 data: {
                     productId: product.id,
-                    type: isStockIn ? client_1.TransactionType.STOCK_IN : client_1.TransactionType.STOCK_OUT,
+                    type: isStockIn ? index_1.TransactionType.STOCK_IN : index_1.TransactionType.STOCK_OUT,
                     quantity,
+                    purchasePrice,
+                    salePrice,
                     userId: user.id,
                     skuComboId: skuCombo.id,
                     productConditionId: condition,
@@ -419,7 +423,7 @@ async function main() {
                     warehouseTypeId: whType,
                     imageUrl: null,
                     note: `Kiểm tra sơ bộ lô hàng #${i + 1}`,
-                    status: isCompleted ? client_1.PreliminaryCheckStatus.COMPLETED : client_1.PreliminaryCheckStatus.PENDING,
+                    status: isCompleted ? index_1.PreliminaryCheckStatus.COMPLETED : index_1.PreliminaryCheckStatus.PENDING,
                     createdBy: createdByUser.id,
                 },
             });
@@ -433,7 +437,7 @@ async function main() {
     cutoff1.setMonth(cutoff1.getMonth() - 1);
     const record1 = await prisma.stocktakingRecord.create({
         data: {
-            status: client_1.StocktakingStatus.APPROVED,
+            status: index_1.StocktakingStatus.APPROVED,
             createdBy: adminUser.id,
             cutoffTime: cutoff1,
             submittedAt: new Date(cutoff1.getTime() + 86400000 * 2),
@@ -457,16 +461,16 @@ async function main() {
     }
     await prisma.stocktakingStatusHistory.createMany({
         data: [
-            { recordId: record1.id, status: client_1.StocktakingStatus.CHECKING, changedBy: adminUser.id, note: 'Bắt đầu kiểm kê' },
-            { recordId: record1.id, status: client_1.StocktakingStatus.PENDING, changedBy: adminUser.id, note: 'Đã hoàn thành kiểm đếm' },
-            { recordId: record1.id, status: client_1.StocktakingStatus.APPROVED, changedBy: adminUser.id, note: 'Duyệt biên bản' },
+            { recordId: record1.id, status: index_1.StocktakingStatus.CHECKING, changedBy: adminUser.id, note: 'Bắt đầu kiểm kê' },
+            { recordId: record1.id, status: index_1.StocktakingStatus.PENDING, changedBy: adminUser.id, note: 'Đã hoàn thành kiểm đếm' },
+            { recordId: record1.id, status: index_1.StocktakingStatus.APPROVED, changedBy: adminUser.id, note: 'Duyệt biên bản' },
         ],
     });
     const cutoff2 = new Date();
     cutoff2.setDate(cutoff2.getDate() - 7);
     const record2 = await prisma.stocktakingRecord.create({
         data: {
-            status: client_1.StocktakingStatus.PENDING,
+            status: index_1.StocktakingStatus.PENDING,
             createdBy: managerUser.id,
             cutoffTime: cutoff2,
             submittedAt: new Date(cutoff2.getTime() + 86400000),
@@ -480,15 +484,15 @@ async function main() {
     }
     await prisma.stocktakingStatusHistory.createMany({
         data: [
-            { recordId: record2.id, status: client_1.StocktakingStatus.CHECKING, changedBy: managerUser.id },
-            { recordId: record2.id, status: client_1.StocktakingStatus.PENDING, changedBy: managerUser.id, note: 'Submit để duyệt' },
+            { recordId: record2.id, status: index_1.StocktakingStatus.CHECKING, changedBy: managerUser.id },
+            { recordId: record2.id, status: index_1.StocktakingStatus.PENDING, changedBy: managerUser.id, note: 'Submit để duyệt' },
         ],
     });
     const cutoff3 = new Date();
     cutoff3.setDate(cutoff3.getDate() - 3);
     const record3 = await prisma.stocktakingRecord.create({
         data: {
-            status: client_1.StocktakingStatus.CHECKING,
+            status: index_1.StocktakingStatus.CHECKING,
             createdBy: staff1.id,
             cutoffTime: cutoff3,
             mode: 'selected',
@@ -503,7 +507,7 @@ async function main() {
     cutoff4.setDate(cutoff4.getDate() - 14);
     const record4 = await prisma.stocktakingRecord.create({
         data: {
-            status: client_1.StocktakingStatus.REJECTED,
+            status: index_1.StocktakingStatus.REJECTED,
             createdBy: staff2.id,
             cutoffTime: cutoff4,
             submittedAt: new Date(cutoff4.getTime() + 86400000),
@@ -512,9 +516,9 @@ async function main() {
     });
     await prisma.stocktakingStatusHistory.createMany({
         data: [
-            { recordId: record4.id, status: client_1.StocktakingStatus.CHECKING, changedBy: staff2.id },
-            { recordId: record4.id, status: client_1.StocktakingStatus.PENDING, changedBy: staff2.id },
-            { recordId: record4.id, status: client_1.StocktakingStatus.REJECTED, changedBy: adminUser.id, note: 'Số liệu không khớp, yêu cầu kiểm tra lại' },
+            { recordId: record4.id, status: index_1.StocktakingStatus.CHECKING, changedBy: staff2.id },
+            { recordId: record4.id, status: index_1.StocktakingStatus.PENDING, changedBy: staff2.id },
+            { recordId: record4.id, status: index_1.StocktakingStatus.REJECTED, changedBy: adminUser.id, note: 'Số liệu không khớp, yêu cầu kiểm tra lại' },
         ],
     });
     console.log(`✅ 4 stocktaking records created`);
@@ -555,7 +559,7 @@ async function main() {
         const txns = await prisma.inventoryTransaction.findMany({ where: { productId: product.id } });
         let stock = 0;
         for (const t of txns) {
-            stock += t.type === client_1.TransactionType.STOCK_IN ? t.quantity : -t.quantity;
+            stock += t.type === index_1.TransactionType.STOCK_IN ? t.quantity : -t.quantity;
         }
         await prisma.product.update({ where: { id: product.id }, data: { stock: Math.max(0, stock) } });
     }

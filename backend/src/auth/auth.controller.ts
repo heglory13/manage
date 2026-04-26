@@ -12,10 +12,14 @@ import { LoginDto, RefreshTokenDto } from './dto/index.js';
 import type { TokenResponse, UserPayload } from './interfaces/index.js';
 import { CurrentUser, Public } from './decorators/index.js';
 import { JwtAuthGuard } from './guards/index.js';
+import { UserService } from '../user/user.service.js';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly userService: UserService,
+  ) {}
 
   @Public()
   @Post('login')
@@ -44,5 +48,13 @@ export class AuthController {
     const payload = user as unknown as UserPayload;
     await this.authService.invalidateRefreshToken(payload.userId);
     return { message: 'Logged out successfully' };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('me')
+  @HttpCode(HttpStatus.OK)
+  async me(@CurrentUser() user: Record<string, unknown>) {
+    const payload = user as unknown as UserPayload;
+    return this.userService.getSafeById(payload.userId);
   }
 }

@@ -12,25 +12,78 @@ var DashboardService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DashboardService = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const prisma_service_js_1 = require("../prisma/prisma.service.js");
+const inventory_valuation_util_js_1 = require("../inventory/inventory-valuation.util.js");
 let DashboardService = DashboardService_1 = class DashboardService {
     prisma;
     constructor(prisma) {
         this.prisma = prisma;
     }
-    async getSummary() {
+    getDateRange(startDate, endDate) {
+        const now = new Date();
+        return {
+            start: startDate
+                ? new Date(`${startDate}T00:00:00`)
+                : new Date(now.getFullYear(), now.getMonth(), 1),
+            end: endDate
+                ? new Date(`${endDate}T23:59:59.999`)
+                : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+        };
+    }
+    async getInventoryValueAt(endDate) {
+        const cutoff = endDate
+            ? new Date(`${endDate}T23:59:59.999`)
+            : new Date();
+        const transactions = await this.prisma.inventoryTransaction.findMany({
+            where: {
+                createdAt: { lte: cutoff },
+                status: index_1.InventoryTransactionStatus.ACTIVE,
+            },
+            include: {
+                product: true,
+                skuCombo: {
+                    include: {
+                        classification: true,
+                        color: true,
+                        size: true,
+                        material: true,
+                    },
+                },
+            },
+            orderBy: { createdAt: 'asc' },
+        });
+        return (0, inventory_valuation_util_js_1.buildInventoryValuationBuckets)(transactions.map((transaction) => ({
+            id: transaction.id,
+            productId: transaction.productId,
+            productName: transaction.product.name,
+            productSku: transaction.product.sku,
+            skuComboId: transaction.skuComboId,
+            compositeSku: transaction.skuCombo?.compositeSku ?? null,
+            classification: transaction.skuCombo?.classification?.name ?? null,
+            color: transaction.skuCombo?.color?.name ?? null,
+            size: transaction.skuCombo?.size?.name ?? null,
+            material: transaction.skuCombo?.material?.name ?? null,
+            type: transaction.type,
+            quantity: transaction.quantity,
+            purchasePrice: transaction.purchasePrice
+                ? Number(transaction.purchasePrice)
+                : Number(transaction.product.price ?? 0),
+            createdAt: transaction.createdAt,
+            status: transaction.status,
+        })), undefined, cutoff).reduce((sum, bucket) => sum + bucket.closingValue, 0);
+    }
+    async getSummary(startDate, endDate) {
         const totalProducts = await this.prisma.product.count();
         const stockResult = await this.prisma.product.aggregate({
             _sum: { stock: true },
         });
         const totalStock = stockResult._sum.stock ?? 0;
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const { start: startOfMonth, end: endOfMonth } = this.getDateRange(startDate, endDate);
         const monthlyTransactions = await this.prisma.inventoryTransaction.groupBy({
             by: ['type'],
             where: {
+                status: index_1.InventoryTransactionStatus.ACTIVE,
                 createdAt: {
                     gte: startOfMonth,
                     lte: endOfMonth,
@@ -38,16 +91,18 @@ let DashboardService = DashboardService_1 = class DashboardService {
             },
             _sum: { quantity: true },
         });
-        const monthlyStockIn = monthlyTransactions.find((t) => t.type === client_1.TransactionType.STOCK_IN)?._sum
+        const monthlyStockIn = monthlyTransactions.find((t) => t.type === index_1.TransactionType.STOCK_IN)?._sum
             .quantity ?? 0;
-        const monthlyStockOut = monthlyTransactions.find((t) => t.type === client_1.TransactionType.STOCK_OUT)
+        const monthlyStockOut = monthlyTransactions.find((t) => t.type === index_1.TransactionType.STOCK_OUT)
             ?._sum.quantity ?? 0;
         const config = await this.prisma.warehouseConfig.findFirst();
         const maxCapacity = config?.maxCapacity ?? 1000;
         const capacityRatio = maxCapacity > 0 ? totalStock / maxCapacity : 0;
+        const totalInventoryValue = await this.getInventoryValueAt(endDate);
         return {
             totalProducts,
             totalStock,
+            totalInventoryValue,
             monthlyStockIn,
             monthlyStockOut,
             capacityRatio,
@@ -71,6 +126,7 @@ let DashboardService = DashboardService_1 = class DashboardService {
                 const transactions = await this.prisma.inventoryTransaction.groupBy({
                     by: ['type'],
                     where: {
+                        status: index_1.InventoryTransactionStatus.ACTIVE,
                         createdAt: {
                             gte: weekStart,
                             lte: weekEnd,
@@ -78,21 +134,25 @@ let DashboardService = DashboardService_1 = class DashboardService {
                     },
                     _sum: { quantity: true },
                 });
-                stockIn.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_IN)?._sum
+                stockIn.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_IN)?._sum
                     .quantity ?? 0);
-                stockOut.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_OUT)?._sum
+                stockOut.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_OUT)?._sum
                     .quantity ?? 0);
             }
         }
         else {
-            for (let i = 11; i >= 0; i--) {
+            const step = period === 'quarter' ? 3 : 1;
+            for (let i = 12 - step; i >= 0; i -= step) {
                 const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
-                const label = `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
+                const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + step, 0, 23, 59, 59, 999);
+                const label = period === 'quarter'
+                    ? `Q${Math.floor(monthDate.getMonth() / 3) + 1}/${monthDate.getFullYear()}`
+                    : `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
                 labels.push(label);
                 const transactions = await this.prisma.inventoryTransaction.groupBy({
                     by: ['type'],
                     where: {
+                        status: index_1.InventoryTransactionStatus.ACTIVE,
                         createdAt: {
                             gte: monthDate,
                             lte: monthEnd,
@@ -100,9 +160,9 @@ let DashboardService = DashboardService_1 = class DashboardService {
                     },
                     _sum: { quantity: true },
                 });
-                stockIn.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_IN)?._sum
+                stockIn.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_IN)?._sum
                     .quantity ?? 0);
-                stockOut.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_OUT)?._sum
+                stockOut.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_OUT)?._sum
                     .quantity ?? 0);
             }
         }
@@ -204,6 +264,7 @@ let DashboardService = DashboardService_1 = class DashboardService {
                 const transactions = await this.prisma.inventoryTransaction.groupBy({
                     by: ['type'],
                     where: {
+                        status: index_1.InventoryTransactionStatus.ACTIVE,
                         createdAt: {
                             gt: weekStart,
                             lte: weekEnd,
@@ -211,21 +272,22 @@ let DashboardService = DashboardService_1 = class DashboardService {
                     },
                     _sum: { quantity: true },
                 });
-                stockInArr.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_IN)?._sum.quantity ?? 0);
-                stockOutArr.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_OUT)?._sum.quantity ?? 0);
+                stockInArr.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_IN)?._sum.quantity ?? 0);
+                stockOutArr.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_OUT)?._sum.quantity ?? 0);
                 const stockResult = await this.prisma.product.aggregate({
                     _sum: { stock: true },
                 });
                 const currentTotalStock = stockResult._sum.stock ?? 0;
                 const changesAfter = await this.prisma.inventoryTransaction.findMany({
                     where: {
+                        status: index_1.InventoryTransactionStatus.ACTIVE,
                         createdAt: { gt: weekEnd },
                     },
                     select: { type: true, quantity: true },
                 });
                 let netAfter = 0;
                 for (const tx of changesAfter) {
-                    if (tx.type === client_1.TransactionType.STOCK_IN) {
+                    if (tx.type === index_1.TransactionType.STOCK_IN) {
                         netAfter += tx.quantity;
                     }
                     else {
@@ -236,14 +298,18 @@ let DashboardService = DashboardService_1 = class DashboardService {
             }
         }
         else {
-            for (let i = 11; i >= 0; i--) {
+            const step = period === 'quarter' ? 3 : 1;
+            for (let i = 12 - step; i >= 0; i -= step) {
                 const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
-                const label = `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
+                const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + step, 0, 23, 59, 59, 999);
+                const label = period === 'quarter'
+                    ? `Q${Math.floor(monthDate.getMonth() / 3) + 1}/${monthDate.getFullYear()}`
+                    : `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
                 labels.push(label);
                 const transactions = await this.prisma.inventoryTransaction.groupBy({
                     by: ['type'],
                     where: {
+                        status: index_1.InventoryTransactionStatus.ACTIVE,
                         createdAt: {
                             gte: monthDate,
                             lte: monthEnd,
@@ -251,21 +317,22 @@ let DashboardService = DashboardService_1 = class DashboardService {
                     },
                     _sum: { quantity: true },
                 });
-                stockInArr.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_IN)?._sum.quantity ?? 0);
-                stockOutArr.push(transactions.find((t) => t.type === client_1.TransactionType.STOCK_OUT)?._sum.quantity ?? 0);
+                stockInArr.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_IN)?._sum.quantity ?? 0);
+                stockOutArr.push(transactions.find((t) => t.type === index_1.TransactionType.STOCK_OUT)?._sum.quantity ?? 0);
                 const stockResult = await this.prisma.product.aggregate({
                     _sum: { stock: true },
                 });
                 const currentTotalStock = stockResult._sum.stock ?? 0;
                 const changesAfter = await this.prisma.inventoryTransaction.findMany({
                     where: {
+                        status: index_1.InventoryTransactionStatus.ACTIVE,
                         createdAt: { gt: monthEnd },
                     },
                     select: { type: true, quantity: true },
                 });
                 let netAfter = 0;
                 for (const tx of changesAfter) {
-                    if (tx.type === client_1.TransactionType.STOCK_IN) {
+                    if (tx.type === index_1.TransactionType.STOCK_IN) {
                         netAfter += tx.quantity;
                     }
                     else {
@@ -277,16 +344,30 @@ let DashboardService = DashboardService_1 = class DashboardService {
         }
         return { labels, stockIn: stockInArr, stockOut: stockOutArr, inventory: inventoryArr, period };
     }
-    async getDetailProducts(page = 1, limit = 20) {
+    async getDetailProducts(page = 1, limit = 20, startDate, endDate) {
         const skip = (page - 1) * limit;
+        const { start, end } = this.getDateRange(startDate, endDate);
         const [data, total] = await Promise.all([
             this.prisma.product.findMany({
+                where: {
+                    createdAt: {
+                        gte: start,
+                        lte: end,
+                    },
+                },
                 skip,
                 take: limit,
                 include: { category: true },
                 orderBy: { createdAt: 'desc' },
             }),
-            this.prisma.product.count(),
+            this.prisma.product.count({
+                where: {
+                    createdAt: {
+                        gte: start,
+                        lte: end,
+                    },
+                },
+            }),
         ]);
         return {
             data,
@@ -296,7 +377,7 @@ let DashboardService = DashboardService_1 = class DashboardService {
             totalPages: Math.ceil(total / limit),
         };
     }
-    async getDetailStock(page = 1, limit = 20) {
+    async getDetailStock(page = 1, limit = 20, _startDate, _endDate) {
         const skip = (page - 1) * limit;
         const [data, total] = await Promise.all([
             this.prisma.product.findMany({
@@ -314,16 +395,15 @@ let DashboardService = DashboardService_1 = class DashboardService {
             totalPages: Math.ceil(total / limit),
         };
     }
-    async getDetailTransactions(type, page = 1, limit = 20) {
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    async getDetailTransactions(type, page = 1, limit = 20, startDate, endDate) {
+        const { start: startOfMonth, end: endOfMonth } = this.getDateRange(startDate, endDate);
         const skip = (page - 1) * limit;
-        const txType = type === 'stock_in' ? client_1.TransactionType.STOCK_IN : client_1.TransactionType.STOCK_OUT;
+        const txType = type === 'stock_in' ? index_1.TransactionType.STOCK_IN : index_1.TransactionType.STOCK_OUT;
         const [transactions, total] = await Promise.all([
             this.prisma.inventoryTransaction.findMany({
                 where: {
                     type: txType,
+                    status: index_1.InventoryTransactionStatus.ACTIVE,
                     createdAt: { gte: startOfMonth, lte: endOfMonth },
                 },
                 skip,
@@ -337,6 +417,7 @@ let DashboardService = DashboardService_1 = class DashboardService {
             this.prisma.inventoryTransaction.count({
                 where: {
                     type: txType,
+                    status: index_1.InventoryTransactionStatus.ACTIVE,
                     createdAt: { gte: startOfMonth, lte: endOfMonth },
                 },
             }),

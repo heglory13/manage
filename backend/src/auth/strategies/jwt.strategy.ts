@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { normalizePermissions } from '../permissions.js';
 import { UserPayload } from '../interfaces/index.js';
 
 @Injectable()
@@ -32,6 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: user.id,
       email: user.email,
       role: user.role,
+      permissions: normalizePermissions(user.permissions, user.role),
     };
   }
 }

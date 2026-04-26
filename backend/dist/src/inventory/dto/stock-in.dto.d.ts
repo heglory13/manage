@@ -1,6 +1,8 @@
 export declare class StockInDto {
     productId: string;
     quantity: number;
+    purchasePrice: number;
+    salePrice: number;
     skuComboId?: string;
     productConditionId?: string;
     storageZoneId?: string;

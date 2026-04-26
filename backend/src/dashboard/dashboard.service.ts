@@ -1,10 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { TransactionType } from '@prisma/client';
+import {
+  InventoryTransactionStatus,
+  TransactionType,
+} from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { buildInventoryValuationBuckets } from '../inventory/inventory-valuation.util.js';
 
 export interface DashboardSummary {
   totalProducts: number;
   totalStock: number;
+  totalInventoryValue: number;
   monthlyStockIn: number;
   monthlyStockOut: number;
   capacityRatio: number;
@@ -14,7 +19,7 @@ export interface ChartData {
   labels: string[];
   stockIn: number[];
   stockOut: number[];
-  period: 'week' | 'month';
+  period: 'week' | 'month' | 'quarter';
 }
 
 export interface ChartDataV2 {
@@ -22,7 +27,7 @@ export interface ChartDataV2 {
   stockIn: number[];
   stockOut: number[];
   inventory: number[];
-  period: 'week' | 'month';
+  period: 'week' | 'month' | 'quarter';
 }
 
 export interface AlertProduct {
@@ -73,7 +78,77 @@ export interface PaginatedResponse<T> {
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getSummary(): Promise<DashboardSummary> {
+  private getDateRange(startDate?: string, endDate?: string) {
+    const now = new Date();
+    return {
+      start: startDate
+        ? new Date(`${startDate}T00:00:00`)
+        : new Date(now.getFullYear(), now.getMonth(), 1),
+      end: endDate
+        ? new Date(`${endDate}T23:59:59.999`)
+        : new Date(
+            now.getFullYear(),
+            now.getMonth() + 1,
+            0,
+            23,
+            59,
+            59,
+            999,
+          ),
+    };
+  }
+
+  private async getInventoryValueAt(endDate?: string) {
+    const cutoff = endDate
+      ? new Date(`${endDate}T23:59:59.999`)
+      : new Date();
+
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: {
+        createdAt: { lte: cutoff },
+        status: InventoryTransactionStatus.ACTIVE,
+      },
+      include: {
+        product: true,
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return buildInventoryValuationBuckets(
+      transactions.map((transaction) => ({
+        id: transaction.id,
+        productId: transaction.productId,
+        productName: transaction.product.name,
+        productSku: transaction.product.sku,
+        skuComboId: transaction.skuComboId,
+        compositeSku: transaction.skuCombo?.compositeSku ?? null,
+        classification: transaction.skuCombo?.classification?.name ?? null,
+        color: transaction.skuCombo?.color?.name ?? null,
+        size: transaction.skuCombo?.size?.name ?? null,
+        material: transaction.skuCombo?.material?.name ?? null,
+        type: transaction.type,
+        quantity: transaction.quantity,
+        purchasePrice:
+          transaction.purchasePrice
+            ? Number(transaction.purchasePrice)
+            : Number(transaction.product.price ?? 0),
+        createdAt: transaction.createdAt,
+        status: transaction.status,
+      })),
+      undefined,
+      cutoff,
+    ).reduce((sum, bucket) => sum + bucket.closingValue, 0);
+  }
+
+  async getSummary(startDate?: string, endDate?: string): Promise<DashboardSummary> {
     const totalProducts = await this.prisma.product.count();
 
     const stockResult = await this.prisma.product.aggregate({
@@ -81,14 +156,15 @@ export class DashboardService {
     });
     const totalStock = stockResult._sum.stock ?? 0;
 
-    // Get current month boundaries
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const { start: startOfMonth, end: endOfMonth } = this.getDateRange(
+      startDate,
+      endDate,
+    );
 
     const monthlyTransactions = await this.prisma.inventoryTransaction.groupBy({
       by: ['type'],
       where: {
+        status: InventoryTransactionStatus.ACTIVE,
         createdAt: {
           gte: startOfMonth,
           lte: endOfMonth,
@@ -108,17 +184,19 @@ export class DashboardService {
     const config = await this.prisma.warehouseConfig.findFirst();
     const maxCapacity = config?.maxCapacity ?? 1000;
     const capacityRatio = maxCapacity > 0 ? totalStock / maxCapacity : 0;
+    const totalInventoryValue = await this.getInventoryValueAt(endDate);
 
     return {
       totalProducts,
       totalStock,
+      totalInventoryValue,
       monthlyStockIn,
       monthlyStockOut,
       capacityRatio,
     };
   }
 
-  async getChartData(period: 'week' | 'month' = 'month'): Promise<ChartData> {
+  async getChartData(period: 'week' | 'month' | 'quarter' = 'month'): Promise<ChartData> {
     const now = new Date();
     const labels: string[] = [];
     const stockIn: number[] = [];
@@ -142,6 +220,7 @@ export class DashboardService {
           await this.prisma.inventoryTransaction.groupBy({
             by: ['type'],
             where: {
+              status: InventoryTransactionStatus.ACTIVE,
               createdAt: {
                 gte: weekStart,
                 lte: weekEnd,
@@ -160,12 +239,12 @@ export class DashboardService {
         );
       }
     } else {
-      // Last 12 months
-      for (let i = 11; i >= 0; i--) {
+      const step = period === 'quarter' ? 3 : 1;
+      for (let i = 12 - step; i >= 0; i -= step) {
         const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const monthEnd = new Date(
           monthDate.getFullYear(),
-          monthDate.getMonth() + 1,
+          monthDate.getMonth() + step,
           0,
           23,
           59,
@@ -173,13 +252,17 @@ export class DashboardService {
           999,
         );
 
-        const label = `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
+        const label =
+          period === 'quarter'
+            ? `Q${Math.floor(monthDate.getMonth() / 3) + 1}/${monthDate.getFullYear()}`
+            : `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
         labels.push(label);
 
         const transactions =
           await this.prisma.inventoryTransaction.groupBy({
             by: ['type'],
             where: {
+              status: InventoryTransactionStatus.ACTIVE,
               createdAt: {
                 gte: monthDate,
                 lte: monthEnd,
@@ -304,7 +387,7 @@ export class DashboardService {
     return d;
   }
 
-  async getChartDataV2(period: 'week' | 'month' = 'month'): Promise<ChartDataV2> {
+  async getChartDataV2(period: 'week' | 'month' | 'quarter' = 'month'): Promise<ChartDataV2> {
     const now = new Date();
     const labels: string[] = [];
     const stockInArr: number[] = [];
@@ -328,6 +411,7 @@ export class DashboardService {
         const transactions = await this.prisma.inventoryTransaction.groupBy({
           by: ['type'],
           where: {
+            status: InventoryTransactionStatus.ACTIVE,
             createdAt: {
               gt: weekStart,
               lte: weekEnd,
@@ -353,6 +437,7 @@ export class DashboardService {
         // Get net changes after this cutoff
         const changesAfter = await this.prisma.inventoryTransaction.findMany({
           where: {
+            status: InventoryTransactionStatus.ACTIVE,
             createdAt: { gt: weekEnd },
           },
           select: { type: true, quantity: true },
@@ -370,22 +455,26 @@ export class DashboardService {
         inventoryArr.push(currentTotalStock - netAfter);
       }
     } else {
-      // Last 12 months
-      for (let i = 11; i >= 0; i--) {
+      const step = period === 'quarter' ? 3 : 1;
+      for (let i = 12 - step; i >= 0; i -= step) {
         const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const monthEnd = new Date(
           monthDate.getFullYear(),
-          monthDate.getMonth() + 1,
+          monthDate.getMonth() + step,
           0,
           23, 59, 59, 999,
         );
 
-        const label = `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
+        const label =
+          period === 'quarter'
+            ? `Q${Math.floor(monthDate.getMonth() / 3) + 1}/${monthDate.getFullYear()}`
+            : `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
         labels.push(label);
 
         const transactions = await this.prisma.inventoryTransaction.groupBy({
           by: ['type'],
           where: {
+            status: InventoryTransactionStatus.ACTIVE,
             createdAt: {
               gte: monthDate,
               lte: monthEnd,
@@ -409,6 +498,7 @@ export class DashboardService {
 
         const changesAfter = await this.prisma.inventoryTransaction.findMany({
           where: {
+            status: InventoryTransactionStatus.ACTIVE,
             createdAt: { gt: monthEnd },
           },
           select: { type: true, quantity: true },
@@ -432,16 +522,35 @@ export class DashboardService {
 
   // === V3: Detail Drill-down ===
 
-  async getDetailProducts(page: number = 1, limit: number = 20): Promise<PaginatedResponse<unknown>> {
+  async getDetailProducts(
+    page: number = 1,
+    limit: number = 20,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<PaginatedResponse<unknown>> {
     const skip = (page - 1) * limit;
+    const { start, end } = this.getDateRange(startDate, endDate);
     const [data, total] = await Promise.all([
       this.prisma.product.findMany({
+        where: {
+          createdAt: {
+            gte: start,
+            lte: end,
+          },
+        },
         skip,
         take: limit,
         include: { category: true },
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.product.count(),
+      this.prisma.product.count({
+        where: {
+          createdAt: {
+            gte: start,
+            lte: end,
+          },
+        },
+      }),
     ]);
 
     return {
@@ -453,7 +562,12 @@ export class DashboardService {
     };
   }
 
-  async getDetailStock(page: number = 1, limit: number = 20): Promise<PaginatedResponse<unknown>> {
+  async getDetailStock(
+    page: number = 1,
+    limit: number = 20,
+    _startDate?: string,
+    _endDate?: string,
+  ): Promise<PaginatedResponse<unknown>> {
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([
       this.prisma.product.findMany({
@@ -477,10 +591,13 @@ export class DashboardService {
     type: 'stock_in' | 'stock_out',
     page: number = 1,
     limit: number = 20,
+    startDate?: string,
+    endDate?: string,
   ): Promise<PaginatedResponse<TransactionDetail>> {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const { start: startOfMonth, end: endOfMonth } = this.getDateRange(
+      startDate,
+      endDate,
+    );
     const skip = (page - 1) * limit;
 
     const txType = type === 'stock_in' ? TransactionType.STOCK_IN : TransactionType.STOCK_OUT;
@@ -489,6 +606,7 @@ export class DashboardService {
       this.prisma.inventoryTransaction.findMany({
         where: {
           type: txType,
+          status: InventoryTransactionStatus.ACTIVE,
           createdAt: { gte: startOfMonth, lte: endOfMonth },
         },
         skip,
@@ -502,6 +620,7 @@ export class DashboardService {
       this.prisma.inventoryTransaction.count({
         where: {
           type: txType,
+          status: InventoryTransactionStatus.ACTIVE,
           createdAt: { gte: startOfMonth, lte: endOfMonth },
         },
       }),

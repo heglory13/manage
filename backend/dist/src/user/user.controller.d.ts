@@ -1,38 +1,44 @@
 import { UserService } from './user.service.js';
-import { CreateUserDto, UpdateRoleDto } from './dto/index.js';
+import { CreateUserDto, UpdatePermissionsDto, UpdateRoleDto } from './dto/index.js';
 export declare class UserController {
     private readonly userService;
     constructor(userService: UserService);
-    findAll(): Promise<Omit<{
+    findAll(): Promise<{
+        permissions: import("../auth/permissions.js").PermissionState;
         id: string;
         email: string;
-        password: string;
         name: string;
         role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         updatedAt: Date;
-        refreshToken: string | null;
-    }, "password" | "refreshToken">[]>;
-    create(dto: CreateUserDto): Promise<Omit<{
+    }[]>;
+    create(dto: CreateUserDto): Promise<{
+        permissions: import("../auth/permissions.js").PermissionState;
         id: string;
         email: string;
-        password: string;
         name: string;
         role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         updatedAt: Date;
-        refreshToken: string | null;
-    }, "password" | "refreshToken">>;
-    updateRole(id: string, dto: UpdateRoleDto): Promise<Omit<{
+    }>;
+    updateRole(id: string, dto: UpdateRoleDto): Promise<{
+        permissions: import("../auth/permissions.js").PermissionState;
         id: string;
         email: string;
-        password: string;
         name: string;
         role: import(".prisma/client").$Enums.Role;
         createdAt: Date;
         updatedAt: Date;
-        refreshToken: string | null;
-    }, "password" | "refreshToken">>;
+    }>;
+    updatePermissions(id: string, dto: UpdatePermissionsDto): Promise<{
+        permissions: import("../auth/permissions.js").PermissionState;
+        id: string;
+        email: string;
+        name: string;
+        role: import(".prisma/client").$Enums.Role;
+        createdAt: Date;
+        updatedAt: Date;
+    }>;
     delete(id: string, currentUser: Record<string, unknown>): Promise<{
         message: string;
     }>;

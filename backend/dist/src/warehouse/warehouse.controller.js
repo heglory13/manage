@@ -14,7 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WarehouseController = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const index_js_1 = require("../auth/decorators/index.js");
 const warehouse_service_js_1 = require("./warehouse.service.js");
 const index_js_2 = require("./dto/index.js");
@@ -75,7 +75,7 @@ let WarehouseController = class WarehouseController {
 exports.WarehouseController = WarehouseController;
 __decorate([
     (0, common_1.Post)('layout'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.CreateLayoutDto]),
@@ -83,7 +83,7 @@ __decorate([
 ], WarehouseController.prototype, "createLayout", null);
 __decorate([
     (0, common_1.Patch)('layout/:id'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -92,7 +92,7 @@ __decorate([
 ], WarehouseController.prototype, "updateLayout", null);
 __decorate([
     (0, common_1.Patch)('layout/:id/mode'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -101,7 +101,7 @@ __decorate([
 ], WarehouseController.prototype, "updateLayoutMode", null);
 __decorate([
     (0, common_1.Delete)('layout/:id'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
@@ -135,7 +135,7 @@ __decorate([
 ], WarehouseController.prototype, "assignProduct", null);
 __decorate([
     (0, common_1.Patch)('positions/:id/move'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -144,7 +144,7 @@ __decorate([
 ], WarehouseController.prototype, "movePosition", null);
 __decorate([
     (0, common_1.Patch)('positions/:id/label'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -153,7 +153,7 @@ __decorate([
 ], WarehouseController.prototype, "updateLabel", null);
 __decorate([
     (0, common_1.Patch)('positions/:id/toggle-active'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
@@ -161,7 +161,7 @@ __decorate([
 ], WarehouseController.prototype, "toggleActive", null);
 __decorate([
     (0, common_1.Patch)('positions/:id/capacity'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -170,7 +170,7 @@ __decorate([
 ], WarehouseController.prototype, "updateCapacity", null);
 __decorate([
     (0, common_1.Patch)('positions/:id/layout'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -186,7 +186,7 @@ __decorate([
 ], WarehouseController.prototype, "getPositionSkus", null);
 __decorate([
     (0, common_1.Post)('positions'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.CreatePositionDto]),
@@ -194,7 +194,7 @@ __decorate([
 ], WarehouseController.prototype, "createPosition", null);
 __decorate([
     (0, common_1.Delete)('positions/:id'),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),

@@ -18,10 +18,13 @@ const auth_service_js_1 = require("./auth.service.js");
 const index_js_1 = require("./dto/index.js");
 const index_js_2 = require("./decorators/index.js");
 const index_js_3 = require("./guards/index.js");
+const user_service_js_1 = require("../user/user.service.js");
 let AuthController = class AuthController {
     authService;
-    constructor(authService) {
+    userService;
+    constructor(authService, userService) {
         this.authService = authService;
+        this.userService = userService;
     }
     async login(dto) {
         const user = await this.authService.validateUser(dto.email, dto.password);
@@ -37,6 +40,10 @@ let AuthController = class AuthController {
         const payload = user;
         await this.authService.invalidateRefreshToken(payload.userId);
         return { message: 'Logged out successfully' };
+    }
+    async me(user) {
+        const payload = user;
+        return this.userService.getSafeById(payload.userId);
     }
 };
 exports.AuthController = AuthController;
@@ -67,8 +74,18 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], AuthController.prototype, "logout", null);
+__decorate([
+    (0, common_1.UseGuards)(index_js_3.JwtAuthGuard),
+    (0, common_1.Post)('me'),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    __param(0, (0, index_js_2.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], AuthController.prototype, "me", null);
 exports.AuthController = AuthController = __decorate([
     (0, common_1.Controller)('auth'),
-    __metadata("design:paramtypes", [auth_service_js_1.AuthService])
+    __metadata("design:paramtypes", [auth_service_js_1.AuthService,
+        user_service_js_1.UserService])
 ], AuthController);
 //# sourceMappingURL=auth.controller.js.map

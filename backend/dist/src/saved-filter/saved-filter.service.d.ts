@@ -1,4 +1,4 @@
-import { SavedFilter } from '@prisma/client';
+import { SavedFilter } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 export declare class SavedFilterService {
     private readonly prisma;

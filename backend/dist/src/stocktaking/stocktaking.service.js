@@ -11,7 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StocktakingService = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const prisma_service_js_1 = require("../prisma/prisma.service.js");
 let StocktakingService = class StocktakingService {
     prisma;
@@ -44,7 +44,7 @@ let StocktakingService = class StocktakingService {
         }
         return { valid: true };
     }
-    async create(mode, userId, productIds) {
+    async create(mode, userId, productIds, cutoffTime) {
         if (mode === 'selected' && (!productIds || productIds.length === 0)) {
             throw new common_1.BadRequestException('Vui lòng chọn ít nhất một sản phẩm khi kiểm kê theo danh sách');
         }
@@ -53,13 +53,13 @@ let StocktakingService = class StocktakingService {
         if (products.length === 0) {
             throw new common_1.BadRequestException('Không tìm thấy sản phẩm nào');
         }
-        const cutoffTime = new Date();
+        const cutoffDate = cutoffTime ? new Date(cutoffTime) : new Date();
         const record = await this.prisma.stocktakingRecord.create({
             data: {
                 createdBy: userId,
-                status: client_1.StocktakingStatus.CHECKING,
+                status: index_1.StocktakingStatus.CHECKING,
                 mode,
-                cutoffTime,
+                cutoffTime: cutoffDate,
                 items: {
                     create: products.map((product) => ({
                         productId: product.id,
@@ -78,7 +78,7 @@ let StocktakingService = class StocktakingService {
                 },
             },
         });
-        await this.recordStatusChange(record.id, client_1.StocktakingStatus.CHECKING, userId);
+        await this.recordStatusChange(record.id, index_1.StocktakingStatus.CHECKING, userId);
         return record;
     }
     async submit(id, items, userId) {
@@ -89,7 +89,7 @@ let StocktakingService = class StocktakingService {
         if (!record) {
             throw new common_1.NotFoundException('Biên bản kiểm kê không tồn tại');
         }
-        if (record.status !== client_1.StocktakingStatus.CHECKING) {
+        if (record.status !== index_1.StocktakingStatus.CHECKING) {
             throw new common_1.BadRequestException('Chỉ có thể submit biên bản ở trạng thái Đang kiểm kê');
         }
         const submittedMap = new Map(items.map((i) => [i.itemId, i]));
@@ -131,12 +131,12 @@ let StocktakingService = class StocktakingService {
             this.prisma.stocktakingRecord.update({
                 where: { id },
                 data: {
-                    status: client_1.StocktakingStatus.PENDING,
+                    status: index_1.StocktakingStatus.PENDING,
                     submittedAt,
                 },
             }),
         ]);
-        await this.recordStatusChange(id, client_1.StocktakingStatus.PENDING, userId);
+        await this.recordStatusChange(id, index_1.StocktakingStatus.PENDING, userId);
         return this.prisma.stocktakingRecord.findUnique({
             where: { id },
             include: {
@@ -155,7 +155,7 @@ let StocktakingService = class StocktakingService {
         if (!record) {
             throw new common_1.NotFoundException('Biên bản kiểm kê không tồn tại');
         }
-        if (record.status !== client_1.StocktakingStatus.PENDING) {
+        if (record.status !== index_1.StocktakingStatus.PENDING) {
             throw new common_1.BadRequestException('Chỉ có thể phê duyệt biên bản ở trạng thái Chờ duyệt');
         }
         const updateOperations = record.items.map((item) => this.prisma.product.update({
@@ -165,7 +165,7 @@ let StocktakingService = class StocktakingService {
         const [updatedRecord] = await this.prisma.$transaction([
             this.prisma.stocktakingRecord.update({
                 where: { id },
-                data: { status: client_1.StocktakingStatus.APPROVED },
+                data: { status: index_1.StocktakingStatus.APPROVED },
                 include: {
                     items: { include: { product: true } },
                     creator: {
@@ -175,7 +175,7 @@ let StocktakingService = class StocktakingService {
             }),
             ...updateOperations,
         ]);
-        await this.recordStatusChange(id, client_1.StocktakingStatus.APPROVED, userId);
+        await this.recordStatusChange(id, index_1.StocktakingStatus.APPROVED, userId);
         return updatedRecord;
     }
     async reject(id, userId, note) {
@@ -185,12 +185,12 @@ let StocktakingService = class StocktakingService {
         if (!record) {
             throw new common_1.NotFoundException('Biên bản kiểm kê không tồn tại');
         }
-        if (record.status !== client_1.StocktakingStatus.PENDING) {
+        if (record.status !== index_1.StocktakingStatus.PENDING) {
             throw new common_1.BadRequestException('Chỉ có thể từ chối biên bản ở trạng thái Chờ duyệt');
         }
         const updatedRecord = await this.prisma.stocktakingRecord.update({
             where: { id },
-            data: { status: client_1.StocktakingStatus.REJECTED },
+            data: { status: index_1.StocktakingStatus.REJECTED },
             include: {
                 items: { include: { product: true } },
                 creator: {
@@ -198,7 +198,7 @@ let StocktakingService = class StocktakingService {
                 },
             },
         });
-        await this.recordStatusChange(id, client_1.StocktakingStatus.REJECTED, userId, note);
+        await this.recordStatusChange(id, index_1.StocktakingStatus.REJECTED, userId, note);
         return updatedRecord;
     }
     async recordStatusChange(recordId, status, changedBy, note) {
@@ -260,7 +260,7 @@ let StocktakingService = class StocktakingService {
         if (!item) {
             throw new common_1.NotFoundException('Dòng kiểm kê không tồn tại');
         }
-        if (item.record.status !== client_1.StocktakingStatus.CHECKING) {
+        if (item.record.status !== index_1.StocktakingStatus.CHECKING) {
             throw new common_1.BadRequestException('Chỉ có thể cập nhật khi biên bản đang ở trạng thái kiểm kê');
         }
         const discrepancy = dto.actualQuantity - item.systemQuantity;

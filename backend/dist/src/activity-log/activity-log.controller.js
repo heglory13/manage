@@ -14,7 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ActivityLogController = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
+const index_1 = require("@prisma/client/index");
 const index_js_1 = require("../auth/decorators/index.js");
 const activity_log_service_js_1 = require("./activity-log.service.js");
 const index_js_2 = require("./dto/index.js");
@@ -30,7 +30,7 @@ let ActivityLogController = class ActivityLogController {
 exports.ActivityLogController = ActivityLogController;
 __decorate([
     (0, common_1.Get)(),
-    (0, index_js_1.Roles)(client_1.Role.ADMIN),
+    (0, index_js_1.Roles)(index_1.Role.ADMIN),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [index_js_2.ActivityLogQueryDto]),

@@ -1,11 +1,22 @@
-import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Patch, Post, Query, Res } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import type { Response } from 'express';
-import { Role } from '@prisma/client';
+import { Role } from '@prisma/client/index';
 import { Roles } from '../auth/decorators/index.js';
 import { CurrentUser } from '../auth/decorators/index.js';
 import type { UserPayload } from '../auth/interfaces/index.js';
+import { hasPermission } from '../auth/permissions.js';
 import { InventoryService } from './inventory.service.js';
-import { StockInDto, StockOutDto, StockAdjustDto, InventoryQueryDto, InventoryQueryV2Dto, TransactionHistoryQueryDto } from './dto/index.js';
+import {
+  DeleteTransactionsDto,
+  StockAdjustDto,
+  StockInDto,
+  StockOutDto,
+  InventoryQueryDto,
+  InventoryQueryV2Dto,
+  TransactionHistoryQueryDto,
+  TransactionStatusActionDto,
+} from './dto/index.js';
 
 @Controller('inventory')
 export class InventoryController {
@@ -18,6 +29,8 @@ export class InventoryController {
   ) {
     const user = currentUser as unknown as UserPayload;
     return this.inventoryService.stockIn(dto.productId, dto.quantity, user.userId, {
+      purchasePrice: dto.purchasePrice,
+      salePrice: dto.salePrice,
       skuComboId: dto.skuComboId,
       productConditionId: dto.productConditionId,
       storageZoneId: dto.storageZoneId,
@@ -60,6 +73,32 @@ export class InventoryController {
     });
   }
 
+  @Patch('transactions/status')
+  @Roles(Role.MANAGER, Role.ADMIN)
+  async updateTransactionStatus(
+    @Body() dto: TransactionStatusActionDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen sua giao dich');
+    }
+    return this.inventoryService.updateTransactionStatus(dto.transactionIds, dto.status);
+  }
+
+  @Delete('transactions')
+  @Roles(Role.ADMIN)
+  async deleteTransactions(
+    @Body() dto: DeleteTransactionsDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'delete')) {
+      throw new ForbiddenException('Ban khong co quyen xoa giao dich');
+    }
+    return this.inventoryService.deleteTransactions(dto.transactionIds);
+  }
+
   @Get()
   async getInventory(@Query() query: InventoryQueryDto) {
     return this.inventoryService.getInventory({
@@ -83,6 +122,11 @@ export class InventoryController {
       categoryId: query.categoryId,
       businessStatus: query.businessStatus,
       productConditionId: query.productConditionId,
+      classificationId: query.classificationId,
+      materialId: query.materialId,
+      colorId: query.colorId,
+      sizeId: query.sizeId,
+      storageZoneId: query.storageZoneId,
       positionId: query.positionId,
       startDate: query.startDate,
       endDate: query.endDate,
@@ -110,6 +154,12 @@ export class InventoryController {
     const buffer = await this.inventoryService.exportExcelV2({
       categoryId: query.categoryId,
       businessStatus: query.businessStatus,
+      productConditionId: query.productConditionId,
+      classificationId: query.classificationId,
+      materialId: query.materialId,
+      colorId: query.colorId,
+      sizeId: query.sizeId,
+      storageZoneId: query.storageZoneId,
       search: query.search,
     });
 

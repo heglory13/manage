@@ -44,6 +44,7 @@ function createMockPrisma(initialStock = 0) {
       }),
     },
     inventoryTransaction: {
+      findFirst: jest.fn().mockResolvedValue({ purchasePrice: 100 }),
       create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
         lastTransaction = {
           id: 'txn-' + Math.random().toString(36).substring(7),
@@ -83,7 +84,10 @@ describe('InventoryService - Property-Based Tests', () => {
             const mockPrisma = createMockPrisma(initialStock);
             const service = new InventoryService(mockPrisma as unknown as PrismaService);
 
-            await service.stockIn('product-1', quantity, 'user-1');
+            await service.stockIn('product-1', quantity, 'user-1', {
+              purchasePrice: 100,
+              salePrice: 150,
+            });
 
             const newStock = mockPrisma.getCurrentStock();
             expect(newStock).toBe(initialStock + quantity);
@@ -211,7 +215,10 @@ describe('InventoryService - Property-Based Tests', () => {
             const mockPrisma = createMockPrisma(initialStock);
             const service = new InventoryService(mockPrisma as unknown as PrismaService);
 
-            await service.stockIn('product-1', quantity, 'user-1');
+            await service.stockIn('product-1', quantity, 'user-1', {
+              purchasePrice: 100,
+              salePrice: 150,
+            });
 
             const txn = mockPrisma.getLastTransaction();
             expect(txn).not.toBeNull();
