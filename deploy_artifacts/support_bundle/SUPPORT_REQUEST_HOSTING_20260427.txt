@@ -1,0 +1,47 @@
+Chao anh/chị,
+
+Em dang deploy ung dung Node.js/NestJS tren DirectAdmin cho subdomain:
+api.havias.asia
+
+Thong tin hien tai:
+- Domain chinh havias.asia dang chay WordPress va van hoat dong binh thuong.
+- Backend Node.js da duoc build thanh cong.
+- MySQL da tao va Prisma da push schema thanh cong.
+- Subdomain api.havias.asia da resolve DNS duoc.
+- App Node.js da duoc cau hinh lai de gan vao api.havias.asia, khong gan vao havias.asia nua.
+
+Van de hien tai:
+1. Khi truy cap api.havias.asia/api/health tu ben ngoai thi luc ra 404, luc gap loi SSL.
+2. Khi test local trong SSH bang:
+   curl http://127.0.0.1:3001/api/health
+   thi app tra ve JSON 404:
+   {"success":false,"statusCode":404,"path":"/api/health","message":"Cannot GET /api/health"}
+3. File startup dung cua NestJS la:
+   /home/haviasas/nodeapps/backend/dist/src/main.js
+   nhung Passenger/DirectAdmin truoc do van co luc co gang load file cu:
+   /home/haviasas/nodeapps/backend/dist/main.js
+4. Log Passenger da tung bao:
+   Error: Cannot find module '/home/haviasas/nodeapps/backend/dist/main.js'
+
+Ben em nghi co van de o phan Passenger/Node.js app mapping hoac startup file/config cache tren DirectAdmin, khien app dang khong nap dung entry file thuc te cua NestJS.
+
+Nho anh/chị ho tro kiem tra giup:
+1. Node.js app cua tai khoan haviasas cho subdomain api.havias.asia co dang duoc Passenger map dung vao:
+   /home/haviasas/nodeapps/backend/dist/src/main.js
+   hay khong.
+2. Co config/cache cu nao cua Passenger/Node selector van tro toi:
+   /home/haviasas/nodeapps/backend/dist/main.js
+   hay khong.
+3. Co the restart/rebuild lai Passenger app mapping cho subdomain api.havias.asia giup em.
+4. Kiem tra va cap SSL dung cho api.havias.asia neu can.
+
+Thong tin he thong:
+- Hosting IP SSH: 112.213.89.195
+- User: haviasas
+- Node version: 18.18.2
+- Application root: /home/haviasas/nodeapps/backend
+- Startup file mong muon: dist/src/main.js
+
+Em gui kem source project de anh/chị de kiem tra neu can.
+
+Cam on anh/chị.
