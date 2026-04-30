@@ -1,0 +1,4 @@
+-- Migration: fix_position_unique
+-- Reason: Allow FREE layout mode where multiple positions can share row=0, column=0.
+-- Old: UNIQUE(layoutId, row, column) - prevents FREE mode
+-- New: UNIQUE(layoutId, label) WHERE label IS NOT NULL - allows free placement

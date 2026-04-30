@@ -1,0 +1,237 @@
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { InputDeclarationService } from './input-declaration.service.js';
+import { SkuComboService } from './sku-combo.service.js';
+import {
+  CreateAttributeDto,
+  CreateStorageZoneDto,
+  CreateSkuComboDto,
+  SkuComboQueryDto,
+  UpdateStorageZoneDto,
+} from './dto/index.js';
+
+@Controller('input-declarations')
+export class InputDeclarationController {
+  constructor(
+    private readonly inputDeclarationService: InputDeclarationService,
+    private readonly skuComboService: SkuComboService,
+  ) {}
+
+  // === Bulk fetch all declarations for spreadsheet view ===
+  @Get('all')
+  getAllDeclarations() {
+    return this.inputDeclarationService.getAllDeclarations();
+  }
+
+  @Get('import-template')
+  async downloadImportTemplate(@Res() res: Response): Promise<void> {
+    const buffer = await this.inputDeclarationService.generateImportTemplate();
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': 'attachment; filename="input-declarations-template.xlsx"',
+      'Content-Length': buffer.length.toString(),
+    });
+
+    res.end(buffer);
+  }
+
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  importDeclarations(@UploadedFile() file: { buffer: Buffer }) {
+    if (!file?.buffer) {
+      throw new BadRequestException('File is required');
+    }
+
+    return this.inputDeclarationService.importDeclarationsFromExcel(file.buffer);
+  }
+
+  // === Danh mục (Category) ===
+  @Get('categories')
+  getCategories() {
+    return this.inputDeclarationService.getAllCategories();
+  }
+
+  @Post('categories')
+  createCategory(@Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.createCategory(dto.name);
+  }
+
+  @Patch('categories/:id')
+  updateCategory(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.updateCategory(id, dto.name);
+  }
+
+  @Delete('categories/:id')
+  deleteCategory(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('category', id);
+  }
+
+  // === Phân loại (Classification) ===
+  @Get('classifications')
+  getClassifications() {
+    return this.inputDeclarationService.getAll('classification');
+  }
+
+  @Post('classifications')
+  createClassification(@Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.create('classification', dto.name);
+  }
+
+  @Patch('classifications/:id')
+  updateClassification(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.updateAttribute('classification', id, dto.name);
+  }
+
+  @Delete('classifications/:id')
+  deleteClassification(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('classification', id);
+  }
+
+  // === Màu sắc (Color) ===
+  @Get('colors')
+  getColors() {
+    return this.inputDeclarationService.getAll('color');
+  }
+
+  @Post('colors')
+  createColor(@Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.create('color', dto.name);
+  }
+
+  @Patch('colors/:id')
+  updateColor(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.updateAttribute('color', id, dto.name);
+  }
+
+  @Delete('colors/:id')
+  deleteColor(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('color', id);
+  }
+
+  // === Size ===
+  @Get('sizes')
+  getSizes() {
+    return this.inputDeclarationService.getAll('size');
+  }
+
+  @Post('sizes')
+  createSize(@Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.create('size', dto.name);
+  }
+
+  @Patch('sizes/:id')
+  updateSize(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.updateAttribute('size', id, dto.name);
+  }
+
+  @Delete('sizes/:id')
+  deleteSize(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('size', id);
+  }
+
+  // === Chất liệu (Material) ===
+  @Get('materials')
+  getMaterials() {
+    return this.inputDeclarationService.getAll('material');
+  }
+
+  @Post('materials')
+  createMaterial(@Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.create('material', dto.name);
+  }
+
+  @Patch('materials/:id')
+  updateMaterial(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.updateAttribute('material', id, dto.name);
+  }
+
+  @Delete('materials/:id')
+  deleteMaterial(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('material', id);
+  }
+
+  // === Tình trạng hàng hoá (ProductCondition) ===
+  @Get('product-conditions')
+  getProductConditions() {
+    return this.inputDeclarationService.getAllProductConditions();
+  }
+
+  @Post('product-conditions')
+  createProductCondition(@Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.createProductCondition(dto.name);
+  }
+
+  @Patch('product-conditions/:id')
+  updateProductCondition(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.updateProductCondition(id, dto.name);
+  }
+
+  @Delete('product-conditions/:id')
+  deleteProductCondition(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('productCondition', id);
+  }
+
+  // === Loại kho (WarehouseType) ===
+  @Get('warehouse-types')
+  getWarehouseTypes() {
+    return this.inputDeclarationService.getAllWarehouseTypes();
+  }
+
+  @Post('warehouse-types')
+  createWarehouseType(@Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.createWarehouseType(dto.name);
+  }
+
+  @Patch('warehouse-types/:id')
+  updateWarehouseType(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+    return this.inputDeclarationService.updateWarehouseType(id, dto.name);
+  }
+
+  @Delete('warehouse-types/:id')
+  deleteWarehouseType(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('warehouseType', id);
+  }
+
+  // === Khu vực hàng hoá (StorageZone) ===
+  @Get('storage-zones')
+  getStorageZones() {
+    return this.inputDeclarationService.getAllStorageZones();
+  }
+
+  @Post('storage-zones')
+  createStorageZone(@Body() dto: CreateStorageZoneDto) {
+    return this.inputDeclarationService.createStorageZone(
+      dto.name,
+      dto.maxCapacity,
+    );
+  }
+
+  @Patch('storage-zones/:id')
+  updateStorageZone(@Param('id') id: string, @Body() dto: UpdateStorageZoneDto) {
+    return this.inputDeclarationService.updateStorageZone(id, dto.name, dto.maxCapacity);
+  }
+
+  @Delete('storage-zones/:id')
+  deleteStorageZone(@Param('id') id: string) {
+    return this.inputDeclarationService.deleteAttribute('storageZone', id);
+  }
+
+  // === SKU tổng hợp (SkuCombo) ===
+  @Get('sku-combos')
+  getSkuCombos(@Query() query: SkuComboQueryDto) {
+    return this.skuComboService.getAll(query);
+  }
+
+  @Post('sku-combos')
+  createSkuCombo(@Body() dto: CreateSkuComboDto) {
+    return this.skuComboService.create(dto);
+  }
+
+  @Delete('sku-combos/:id')
+  deleteSkuCombo(@Param('id') id: string) {
+    return this.skuComboService.delete(id);
+  }
+}
