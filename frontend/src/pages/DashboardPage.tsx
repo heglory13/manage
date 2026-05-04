@@ -40,7 +40,7 @@ import {
 type Period = 'week' | 'month' | 'quarter';
 
 interface DashboardSummary {
-  totalProducts: number;
+  totalCategories: number;
   totalStock: number;
   totalInventoryValue: number;
   monthlyStockIn: number;
@@ -57,13 +57,10 @@ interface ChartDataV2 {
   period: Period;
 }
 
-interface AlertProduct {
-  id: string;
-  name: string;
-  sku: string;
+interface AlertCategory {
+  categoryId: string;
+  categoryName: string;
   stock: number;
-  minThreshold: number;
-  maxThreshold: number;
 }
 
 interface TopZone {
@@ -75,13 +72,11 @@ interface TopZone {
   usagePercent: number;
 }
 
-interface TopProduct {
+interface TopCategory {
   rank: number;
-  id: string;
-  name: string;
-  sku: string;
+  categoryId: string;
+  categoryName: string;
   stock: number;
-  classificationName?: string;
 }
 
 function getDefaultRange() {
@@ -125,8 +120,8 @@ function DetailDialog({
               <TableHeader>
                 <TableRow>
                   <TableHead>Ngay</TableHead>
-                  <TableHead>San pham</TableHead>
-                  <TableHead>SKU</TableHead>
+                      <TableHead>Danh mục</TableHead>
+                      <TableHead>Ma</TableHead>
                   <TableHead className="text-right">So luong</TableHead>
                   <TableHead>Nguoi thuc hien</TableHead>
                 </TableRow>
@@ -138,9 +133,9 @@ function DetailDialog({
                       <TableCell>
                         {row.createdAt ? formatDateTime(row.createdAt) : '-'}
                       </TableCell>
-                      <TableCell>{row.productName ?? row.name ?? '-'}</TableCell>
+                      <TableCell>{row.categoryName ?? row.name ?? '-'}</TableCell>
                       <TableCell className="font-mono text-xs">
-                        {row.productSku ?? row.sku ?? '-'}
+                        {row.categoryId ?? row.id ?? '-'}
                       </TableCell>
                       <TableCell className="text-right font-medium">
                         {typeof row.quantity === 'number'
@@ -149,7 +144,7 @@ function DetailDialog({
                             ? formatNumber(row.stock)
                             : '-'}
                       </TableCell>
-                      <TableCell>{row.userName ?? row.category?.name ?? '-'}</TableCell>
+                      <TableCell>{row.userName ?? '-'}</TableCell>
                     </TableRow>
                   ))
                 ) : (
@@ -172,12 +167,12 @@ export default function DashboardPage() {
   const defaultRange = useMemo(() => getDefaultRange(), []);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [chartData, setChartData] = useState<ChartDataV2 | null>(null);
-  const [belowMin, setBelowMin] = useState<AlertProduct[]>([]);
-  const [aboveMax, setAboveMax] = useState<AlertProduct[]>([]);
+  const [belowMin, setBelowMin] = useState<AlertCategory[]>([]);
+  const [aboveMax, setAboveMax] = useState<AlertCategory[]>([]);
   const [topZonesHighest, setTopZonesHighest] = useState<TopZone[]>([]);
   const [topZonesLowest, setTopZonesLowest] = useState<TopZone[]>([]);
-  const [topProductsHighest, setTopProductsHighest] = useState<TopProduct[]>([]);
-  const [topProductsLowest, setTopProductsLowest] = useState<TopProduct[]>([]);
+  const [topCategoriesHighest, setTopCategoriesHighest] = useState<TopCategory[]>([]);
+  const [topCategoriesLowest, setTopCategoriesLowest] = useState<TopCategory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>('month');
@@ -201,8 +196,8 @@ export default function DashboardPage() {
         aboveMaxRes,
         topZonesHighestRes,
         topZonesLowestRes,
-        topProductsHighestRes,
-        topProductsLowestRes,
+        topCategoriesHighestRes,
+        topCategoriesLowestRes,
       ] = await Promise.allSettled([
         api.get('/dashboard/summary', { params }),
         api.get('/dashboard/chart-v2', { params: { period } }),
@@ -210,8 +205,8 @@ export default function DashboardPage() {
         api.get('/dashboard/alerts/above-max'),
         api.get('/dashboard/top-zones', { params: { type: 'highest', limit: 10 } }),
         api.get('/dashboard/top-zones', { params: { type: 'lowest', limit: 10 } }),
-        api.get('/dashboard/top-products', { params: { type: 'highest', limit: 20 } }),
-        api.get('/dashboard/top-products', { params: { type: 'lowest', limit: 20 } }),
+        api.get('/dashboard/top-categories', { params: { type: 'highest', limit: 20 } }),
+        api.get('/dashboard/top-categories', { params: { type: 'lowest', limit: 20 } }),
       ]);
 
       setSummary(summaryRes.status === 'fulfilled' ? summaryRes.value.data : null);
@@ -224,14 +219,14 @@ export default function DashboardPage() {
       setTopZonesLowest(
         topZonesLowestRes.status === 'fulfilled' ? topZonesLowestRes.value.data || [] : [],
       );
-      setTopProductsHighest(
-        topProductsHighestRes.status === 'fulfilled'
-          ? topProductsHighestRes.value.data || []
+      setTopCategoriesHighest(
+        topCategoriesHighestRes.status === 'fulfilled'
+          ? topCategoriesHighestRes.value.data || []
           : [],
       );
-      setTopProductsLowest(
-        topProductsLowestRes.status === 'fulfilled'
-          ? topProductsLowestRes.value.data || []
+      setTopCategoriesLowest(
+        topCategoriesLowestRes.status === 'fulfilled'
+          ? topCategoriesLowestRes.value.data || []
           : [],
       );
 
@@ -264,7 +259,7 @@ export default function DashboardPage() {
       const params = { page: 1, limit: 50, startDate, endDate };
       const endpoint =
         type === 'products'
-          ? '/dashboard/detail/products'
+          ? '/dashboard/detail/categories'
           : type === 'stock'
             ? '/dashboard/detail/stock'
             : type === 'order_plans'
@@ -324,30 +319,30 @@ export default function DashboardPage() {
     ));
   };
 
-  const renderProductList = (products: TopProduct[], accent: 'violet' | 'emerald') => {
+  const renderCategoryList = (categories: TopCategory[], accent: 'violet' | 'emerald') => {
     const accentText = accent === 'violet' ? 'text-violet-600' : 'text-emerald-600';
 
-    if (products.length === 0) {
-      return <div className="py-8 text-center text-slate-500">Chua co du lieu hang hoa.</div>;
+    if (categories.length === 0) {
+      return <div className="py-8 text-center text-slate-500">Chua co du lieu danh muc.</div>;
     }
 
-    return products.map((product) => (
+    return categories.map((category) => (
       <div
-        key={product.id}
+        key={category.categoryId}
         className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 px-4 py-3"
       >
         <div className="flex min-w-0 items-center gap-4">
-          <div className="w-8 text-sm font-semibold text-slate-400">{product.rank}.</div>
+          <div className="w-8 text-sm font-semibold text-slate-400">{category.rank}.</div>
           <div className="min-w-0">
             <div className="truncate font-semibold text-slate-900">
-              {product.classificationName || product.name}
+              {category.categoryName}
             </div>
-            <div className="text-sm text-slate-500">Tong ton theo phan loai hang</div>
+            <div className="text-sm text-slate-500">Tong ton theo danh muc</div>
           </div>
         </div>
 
         <div className={`min-w-[90px] text-right text-2xl font-bold ${accentText}`}>
-          {formatNumber(product.stock)}
+          {formatNumber(category.stock)}
         </div>
       </div>
     ));
@@ -363,10 +358,10 @@ export default function DashboardPage() {
 
   const cards = [
     {
-      title: 'Tong san pham',
-      value: summary?.totalProducts ?? 0,
+      title: 'Tong danh muc',
+      value: summary?.totalCategories ?? 0,
       icon: Package,
-      onClick: () => openDetail('products', 'Danh sach san pham'),
+      onClick: () => openDetail('products', 'Danh sach danh muc'),
     },
     {
       title: 'Tong ton kho',
@@ -546,19 +541,15 @@ export default function DashboardPage() {
               {belowMin.length > 0 ? (
                 belowMin.slice(0, 6).map((item) => (
                   <div
-                    key={item.id}
+                    key={item.categoryId}
                     className="flex items-center justify-between rounded-xl border border-slate-100 px-4 py-3"
                   >
                     <div>
-                      <div className="font-medium text-slate-900">{item.name}</div>
-                      <div className="font-mono text-xs text-slate-500">{item.sku}</div>
+                      <div className="font-medium text-slate-900">{item.categoryName}</div>
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-amber-600">
                         {formatNumber(item.stock)}
-                      </div>
-                      <div className="text-xs text-slate-400">
-                        Min: {formatNumber(item.minThreshold)}
                       </div>
                     </div>
                   </div>
@@ -582,19 +573,15 @@ export default function DashboardPage() {
               {aboveMax.length > 0 ? (
                 aboveMax.slice(0, 6).map((item) => (
                   <div
-                    key={item.id}
+                    key={item.categoryId}
                     className="flex items-center justify-between rounded-xl border border-slate-100 px-4 py-3"
                   >
                     <div>
-                      <div className="font-medium text-slate-900">{item.name}</div>
-                      <div className="font-mono text-xs text-slate-500">{item.sku}</div>
+                      <div className="font-medium text-slate-900">{item.categoryName}</div>
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-rose-600">
                         {formatNumber(item.stock)}
-                      </div>
-                      <div className="text-xs text-slate-400">
-                        Max: {formatNumber(item.maxThreshold)}
                       </div>
                     </div>
                   </div>
@@ -632,22 +619,22 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">
-                Top 20 hang hoa so luong ton nhieu nhat
+                Top 20 danh mục tồn nhiều nhất
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {renderProductList(topProductsHighest, 'violet')}
+              {renderCategoryList(topCategoriesHighest, 'violet')}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
               <CardTitle className="text-base">
-                Top 20 hang hoa so luong ton thap nhat
+                Top 20 danh mục tồn thấp nhất
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {renderProductList(topProductsLowest, 'emerald')}
+              {renderCategoryList(topCategoriesLowest, 'emerald')}
             </CardContent>
           </Card>
         </div>

@@ -31,6 +31,7 @@ type UserRecord = {
 const moduleDefinitions = [
   ['Dashboard', 'dashboard'],
   ['Quan ly ton kho', 'inventory'],
+  ['In ma vach', 'barcodePrint'],
   ['Nhap kiem so bo', 'preliminaryChecks'],
   ['Ke hoach dat hang', 'orderPlans'],
   ['Nhap / Xuat kho', 'transactions'],
@@ -57,6 +58,7 @@ function createDefaultPermissions(role: UserRecord['role']): PermissionState {
   const base: PermissionState = {
     dashboard: createFlags({ view: true }),
     inventory: createFlags({ view: true }),
+    barcodePrint: createFlags({ view: true }),
     preliminaryChecks: createFlags({ view: true }),
     orderPlans: createFlags({ view: true }),
     transactions: createFlags({ view: true }),
@@ -69,21 +71,15 @@ function createDefaultPermissions(role: UserRecord['role']): PermissionState {
   };
 
   if (role === 'ADMIN') {
-    base.inventory = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.preliminaryChecks = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.orderPlans = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.transactions = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.audit = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.warehouse = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.input = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.activityLogs = createFlags({ view: true });
-    base.users = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.generalSettings = createFlags({ view: true, save: true, edit: true });
+    Object.keys(base).forEach((key) => {
+      base[key] = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
+    });
     return base;
   }
 
   if (role === 'MANAGER') {
     base.inventory = createFlags({ view: true, create: true, save: true, edit: true });
+    base.barcodePrint = createFlags({ view: true, create: true, save: true, edit: true });
     base.preliminaryChecks = createFlags({ view: true, create: true, save: true, edit: true });
     base.orderPlans = createFlags({ view: true, create: true, save: true, edit: true });
     base.transactions = createFlags({ view: true, create: true, save: true, edit: true });
@@ -96,6 +92,7 @@ function createDefaultPermissions(role: UserRecord['role']): PermissionState {
     return base;
   }
 
+  base.barcodePrint = createFlags({ view: true, create: true });
   base.preliminaryChecks = createFlags({ view: true, create: true, save: true });
   base.orderPlans = createFlags({ view: true, create: true, save: true });
   base.transactions = createFlags({ view: true, create: true, save: true });
@@ -109,14 +106,15 @@ function normalizePermissions(role: UserRecord['role'], permissions?: Permission
     return defaults;
   }
 
-  const normalizedEntries = Object.entries(defaults).map(([moduleKey, flags]) => [
+  // Merge: keep any permission that was explicitly set, fill missing with defaults
+  const normalizedEntries = Object.entries(defaults).map(([moduleKey, defaultFlags]) => [
     moduleKey,
     {
-      view: flags.view ? Boolean(permissions[moduleKey]?.view) : false,
-      create: flags.create ? Boolean(permissions[moduleKey]?.create) : false,
-      save: flags.save ? Boolean(permissions[moduleKey]?.save) : false,
-      edit: flags.edit ? Boolean(permissions[moduleKey]?.edit) : false,
-      delete: flags.delete ? Boolean(permissions[moduleKey]?.delete) : false,
+      view: permissions[moduleKey]?.view !== undefined ? Boolean(permissions[moduleKey].view) : defaultFlags.view,
+      create: permissions[moduleKey]?.create !== undefined ? Boolean(permissions[moduleKey].create) : defaultFlags.create,
+      save: permissions[moduleKey]?.save !== undefined ? Boolean(permissions[moduleKey].save) : defaultFlags.save,
+      edit: permissions[moduleKey]?.edit !== undefined ? Boolean(permissions[moduleKey].edit) : defaultFlags.edit,
+      delete: permissions[moduleKey]?.delete !== undefined ? Boolean(permissions[moduleKey].delete) : defaultFlags.delete,
     },
   ]);
 
@@ -462,10 +460,6 @@ export default function UsersPage() {
                           className="h-4 w-4 rounded border-slate-300 accent-violet-600"
                           checked={Boolean(permissions[key]?.[permissionKey])}
                           onChange={() => togglePermission(key, permissionKey)}
-                          disabled={
-                            (key === 'activityLogs' && permissionKey !== 'view') ||
-                            !createDefaultPermissions(selectedUser.role)[key]?.[permissionKey]
-                          }
                         />
                       </div>
                     ))}

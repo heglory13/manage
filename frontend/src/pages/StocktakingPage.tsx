@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, CheckCircle2, Clock3, Eye, History, Plus, Printer, RefreshCcw, Search, ShieldAlert, Upload, X } from 'lucide-react';
+import { Check, CheckCircle2, Clock3, Eye, History, Plus, Printer, RefreshCcw, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import AppLayout from '../components/layout/AppLayout';
 import { api } from '../services/api';
@@ -11,20 +11,32 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { defaultGeneralSettings, fetchGeneralSettings } from '../services/generalSettings';
+import SmartFilter, { type FilterField } from '../components/common/SmartFilter';
+import { useSavedFilters } from '../hooks/useSavedFilters';
+import { SearchableSelect } from '../components/ui/searchable-select';
 
 type StocktakingStatus = 'CHECKING' | 'PENDING' | 'APPROVED' | 'REJECTED';
 
 type StocktakingItem = {
   id: string;
+  categoryId?: string;
+  itemCode: string;
+  itemLabel: string;
   systemQuantity: number;
   actualQuantity: number;
   discrepancy: number;
   discrepancyReason?: string;
   evidenceUrl?: string;
-  product: {
+  product?: {
     id: string;
     name: string;
     sku: string;
+    categoryId?: string;
+  };
+  category?: {
+    id: string;
+    name: string;
+    code?: string;
   };
 };
 
@@ -45,20 +57,13 @@ type StocktakingRecord = {
   }>;
 };
 
-type ProductOption = {
-  id: string;
-  name: string;
-  sku: string;
-  categoryId?: string;
-};
-
 type PositionOption = {
   id: string;
   label: string;
 };
 
 type AdjustmentForm = {
-  productId: string;
+  categoryId: string;
   warehousePositionId: string;
   quantity: number;
   type: 'INCREASE' | 'DECREASE';
@@ -95,9 +100,20 @@ function formatAuditCode(record: StocktakingRecord) {
   return record.id.startsWith('AUD-') ? record.id : `AUD-${record.id}`;
 }
 
+function getStocktakingItemCode(item: StocktakingItem) {
+  return item.itemCode || item.category?.code || item.product?.sku || '-';
+}
+
+function getStocktakingItemLabel(item: StocktakingItem) {
+  return item.itemLabel || item.category?.name || item.product?.name || '-';
+}
+
+function getStocktakingItemCategoryId(item: StocktakingItem) {
+  return item.categoryId || item.category?.id || item.product?.categoryId || '';
+}
+
 export default function StocktakingPage() {
   const [records, setRecords] = useState<StocktakingRecord[]>([]);
-  const [products, setProducts] = useState<ProductOption[]>([]);
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
   const [warehouseTypes, setWarehouseTypes] = useState<Array<{ id: string; name: string }>>([]);
   const [positions, setPositions] = useState<PositionOption[]>([]);
@@ -106,26 +122,102 @@ export default function StocktakingPage() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<StocktakingRecord | null>(null);
-  const [createMode, setCreateMode] = useState<'full' | 'selected' | 'category' | 'warehouseType'>('selected');
+  const [createMode, setCreateMode] = useState<'full' | 'category' | 'warehouseType' | 'product'>('category');
   const [cutoffDate, setCutoffDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [cutoffTime, setCutoffTime] = useState(() => new Date().toTimeString().slice(0, 5));
-  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [selectedWarehouseTypeId, setSelectedWarehouseTypeId] = useState('');
-  const [skuSearch, setSkuSearch] = useState('');
+  // Product mode: checkbox list of all SKUs
+  const [allSkuCombos, setAllSkuCombos] = useState<Array<{
+    id: string;
+    compositeSku: string;
+    classification: { name: string };
+    color: { name: string };
+    size: { name: string };
+    material: { name: string };
+  }>>([]);
+  const [skuFilterQuery, setSkuFilterQuery] = useState('');
+  const [selectedSkuIds, setSelectedSkuIds] = useState<Set<string>>(new Set());
+  const [stocktakingProductSearch, setStocktakingProductSearch] = useState('');
+  const [stocktakingSearchResults, setStocktakingSearchResults] = useState<Array<{
+    id: string;
+    compositeSku: string;
+    categoryId: string | null;
+    categoryName: string | null;
+    classification: { id: string; name: string };
+    color: { id: string; name: string };
+    size: { id: string; name: string };
+    material: { id: string; name: string };
+  }>>([]);
+  const [stocktakingSearchOpen, setStocktakingSearchOpen] = useState(false);
+  const [stocktakingSelectedProduct, setStocktakingSelectedProduct] = useState('');
   const [isSubmittingConfirmation, setIsSubmittingConfirmation] = useState(false);
   const [signedDocument, setSignedDocument] = useState<{ name: string; preview: string; url: string } | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
   const [confirmForm, setConfirmForm] = useState<Record<string, { actualQuantity: number; discrepancyReason: string }>>({});
   const [generalSettings, setGeneralSettings] = useState(defaultGeneralSettings);
   const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentForm>({
-    productId: '',
+    categoryId: '',
     warehousePositionId: '',
     quantity: 1,
     type: 'DECREASE',
     reason: '',
   });
+
+  const savedFilterHook = useSavedFilters({ pageKey: 'stocktaking' });
+
+  const filterFields = useMemo<FilterField[]>(() => [
+    {
+      key: 'status',
+      label: 'Trạng thái',
+      type: 'select',
+      options: [
+        { value: 'CHECKING', label: 'Đang kiểm kê' },
+        { value: 'PENDING', label: 'Chờ duyệt' },
+        { value: 'APPROVED', label: 'Hoàn thành' },
+        { value: 'REJECTED', label: 'Từ chối' },
+      ],
+    },
+    {
+      key: 'mode',
+      label: 'Phạm vi',
+      type: 'select',
+      options: [
+        { value: 'full', label: 'Toàn bộ kho' },
+        { value: 'category', label: 'Theo danh mục' },
+        { value: 'warehouseType', label: 'Theo loại kho' },
+      ],
+    },
+    {
+      key: 'creator',
+      label: 'Nhân viên',
+      type: 'text',
+      placeholder: 'Lọc nhân viên...',
+    },
+    {
+      key: 'date',
+      label: 'Ngày tạo',
+      type: 'date',
+    },
+  ], []);
+
+  const filteredRecords = useMemo(() => {
+    const f = savedFilterHook.filters;
+    if (Object.keys(f).length === 0) return records;
+
+    return records.filter((record) => {
+      if (f.status && record.status !== f.status) return false;
+      if (f.mode && record.mode !== f.mode) return false;
+      if (f.creator && !record.creator?.name?.toLowerCase().includes(String(f.creator).toLowerCase())) return false;
+      if (f.date) {
+        const recordDate = new Date(record.createdAt).toISOString().slice(0, 10);
+        if (recordDate !== f.date) return false;
+      }
+      return true;
+    });
+  }, [records, savedFilterHook.filters]);
 
   const fetchRecords = useCallback(async () => {
     setIsLoading(true);
@@ -139,24 +231,16 @@ export default function StocktakingPage() {
     }
   }, []);
 
-  const fetchProducts = useCallback(async () => {
+  const fetchMetadata = useCallback(async () => {
     try {
-      const [productRes, layoutRes, declarationRes] = await Promise.all([
-        api.get('/products', { params: { limit: 1000 } }),
+      const [layoutRes, declarationRes, skuRes] = await Promise.all([
         api.get('/warehouse/layout'),
         api.get('/input-declarations/all'),
+        api.get('/input-declarations/sku-combos', { params: { limit: 500 } }),
       ]);
-      const data = productRes.data.data || productRes.data || [];
-      setProducts(
-        data.map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          sku: item.sku,
-          categoryId: item.categoryId,
-        }))
-      );
       setCategories(declarationRes.data.categories || []);
       setWarehouseTypes(declarationRes.data.warehouseTypes || []);
+      setAllSkuCombos(skuRes.data.data || []);
       setPositions(
         (layoutRes.data?.positions || [])
           .filter((position: any) => position.label)
@@ -166,14 +250,14 @@ export default function StocktakingPage() {
           }))
       );
     } catch (err) {
-      console.error('Error fetching products for stocktaking:', err);
+      console.error('Error fetching stocktaking metadata:', err);
     }
   }, []);
 
   useEffect(() => {
     fetchRecords();
-    fetchProducts();
-  }, [fetchProducts, fetchRecords]);
+    fetchMetadata();
+  }, [fetchMetadata, fetchRecords]);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -206,21 +290,22 @@ export default function StocktakingPage() {
     };
   }, [currentMonthApproved]);
 
-  const filteredProducts = useMemo(() => {
-    const keyword = skuSearch.trim().toLowerCase();
-    return products.filter((product) => !keyword || product.sku.toLowerCase().includes(keyword) || product.name.toLowerCase().includes(keyword));
-  }, [products, skuSearch]);
-
-  const selectedCount = selectedProductIds.length;
   const canSubmitCreate =
     createMode === 'full' ||
-    (createMode === 'selected' && selectedProductIds.length > 0) ||
     (createMode === 'category' && Boolean(selectedCategoryId)) ||
+    (createMode === 'warehouseType' && Boolean(selectedWarehouseTypeId)) ||
+    (createMode === 'product' && selectedSkuIds.size > 0);
     (createMode === 'warehouseType' && Boolean(selectedWarehouseTypeId));
 
   const openAdjustment = (item: StocktakingItem) => {
+    const categoryId = getStocktakingItemCategoryId(item);
+    if (!categoryId) {
+      alert('Không tìm thấy danh mục cho dòng kiểm kê này để điều chỉnh tồn kho.');
+      return;
+    }
+
     setAdjustmentForm({
-      productId: item.product.id,
+      categoryId,
       warehousePositionId: '',
       quantity: Math.max(Math.abs(item.discrepancy) || 1, 1),
       type: item.discrepancy >= 0 ? 'INCREASE' : 'DECREASE',
@@ -241,34 +326,34 @@ export default function StocktakingPage() {
     }
   };
 
-  const toggleProductSelection = (productId: string) => {
-    setSelectedProductIds((prev) => (prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId]));
-  };
-
   const handleCreate = async () => {
     try {
       const payload: {
-        mode: 'full' | 'selected' | 'category' | 'warehouseType';
-        productIds?: string[];
+        mode: 'full' | 'category' | 'warehouseType' | 'product';
         categoryIds?: string[];
         warehouseTypeIds?: string[];
+        skuComboIds?: string[];
         cutoffTime: string;
       } = {
         mode: createMode,
         cutoffTime: `${cutoffDate}T${cutoffTime}:00`,
       };
-      if (createMode === 'selected') payload.productIds = selectedProductIds;
       if (createMode === 'category') payload.categoryIds = selectedCategoryId ? [selectedCategoryId] : [];
       if (createMode === 'warehouseType') payload.warehouseTypeIds = selectedWarehouseTypeId ? [selectedWarehouseTypeId] : [];
+      if (createMode === 'product') payload.skuComboIds = [...selectedSkuIds];
 
       const res = await api.post('/stocktaking', payload);
       const created = res.data;
 
       setShowCreateModal(false);
-      setSelectedProductIds([]);
       setSelectedCategoryId('');
       setSelectedWarehouseTypeId('');
-      setSkuSearch('');
+      setSelectedSkuIds(new Set());
+      setSkuFilterQuery('');
+      setStocktakingProductSearch('');
+      setStocktakingSelectedProduct('');
+      setStocktakingSearchResults([]);
+      setStocktakingSearchOpen(false);
       setCutoffDate(new Date().toISOString().slice(0, 10));
       setCutoffTime(new Date().toTimeString().slice(0, 5));
       await fetchRecords();
@@ -364,7 +449,7 @@ export default function StocktakingPage() {
   const handleAdjustmentSubmit = async () => {
     try {
       await api.post('/inventory/adjust', {
-        productId: adjustmentForm.productId,
+        categoryId: adjustmentForm.categoryId,
         warehousePositionId: adjustmentForm.warehousePositionId || undefined,
         quantity: Number(adjustmentForm.quantity),
         type: adjustmentForm.type,
@@ -373,7 +458,7 @@ export default function StocktakingPage() {
 
       setShowAdjustmentModal(false);
       setAdjustmentForm({
-        productId: '',
+        categoryId: '',
         warehousePositionId: '',
         quantity: 1,
         type: 'DECREASE',
@@ -421,7 +506,7 @@ export default function StocktakingPage() {
         <div class="wrap">
           <div class="head">
             <div>
-              <div class="title">${generalSettings.brandName || generalSettings.storeName}</div>
+              <div class="title">${generalSettings.storeName || generalSettings.brandName}</div>
               <div class="sub">Địa chỉ: ${generalSettings.address || '-'}</div>
               <div class="sub">Điện thoại: ${generalSettings.phone || '-'}</div>
             </div>
@@ -446,8 +531,8 @@ export default function StocktakingPage() {
             <thead>
               <tr>
                 <th>STT</th>
-                <th>SKU</th>
-                <th>Tên sản phẩm</th>
+                <th>Mã danh mục</th>
+                <th>Tên danh mục</th>
                 <th class="center">Tồn hệ thống</th>
                 <th class="center">Tồn thực tế</th>
                 <th class="center">Chênh lệch</th>
@@ -463,8 +548,8 @@ export default function StocktakingPage() {
                   return `
                     <tr>
                       <td class="center">${index + 1}</td>
-                      <td><strong>${item.product?.sku || '-'}</strong></td>
-                      <td>${item.product?.name || '-'}</td>
+                      <td><strong>${getStocktakingItemCode(item)}</strong></td>
+                      <td>${getStocktakingItemLabel(item)}</td>
                       <td class="center"><strong>${item.systemQuantity}</strong></td>
                       <td class="center">${actualValue}</td>
                       <td class="center">${discrepancyValue}</td>
@@ -507,8 +592,8 @@ export default function StocktakingPage() {
   const handleExportExcel = (record: StocktakingRecord) => {
     const exportData = record.items.map((item, index) => ({
       STT: index + 1,
-      SKU: item.product?.sku || '-',
-      'Tên sản phẩm': item.product?.name || '-',
+      'Mã danh mục': getStocktakingItemCode(item),
+      'Tên danh mục': getStocktakingItemLabel(item),
       'Tồn hệ thống': item.systemQuantity,
       'Tồn thực tế': item.actualQuantity === 0 ? '' : item.actualQuantity,
       'Chênh lệch': item.actualQuantity === 0 ? '' : item.discrepancy,
@@ -536,6 +621,19 @@ export default function StocktakingPage() {
           </Button>
         </div>
 
+        <SmartFilter
+          fields={filterFields}
+          filters={savedFilterHook.filters}
+          savedFilters={savedFilterHook.savedFilters}
+          activeFilterId={savedFilterHook.activeFilterId}
+          onUpdateFilter={savedFilterHook.updateFilter}
+          onRemoveFilter={savedFilterHook.removeFilter}
+          onClearFilters={savedFilterHook.clearFilters}
+          onApplyFilter={savedFilterHook.applyFilter}
+          onSaveFilter={savedFilterHook.saveFilter}
+          onDeleteFilter={savedFilterHook.deleteFilter}
+        />
+
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
           <Card className="rounded-[22px] border border-slate-200 shadow-sm">
             <CardContent className="p-4 sm:p-5">
@@ -548,9 +646,9 @@ export default function StocktakingPage() {
                 <div className="flex h-64 items-center justify-center">
                   <div className="spinner" />
                 </div>
-              ) : records.length > 0 ? (
+              ) : filteredRecords.length > 0 ? (
                 <div className="space-y-4">
-                  {records.map((record) => (
+                  {filteredRecords.map((record) => (
                     <div key={record.id} className="flex flex-wrap items-center justify-between gap-4 rounded-[22px] border border-slate-100 bg-white px-4 py-4 shadow-sm">
                       <div className="flex items-center gap-4">
                         <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
@@ -596,6 +694,22 @@ export default function StocktakingPage() {
                           aria-label="In biên bản"
                         >
                           <Printer size={17} />
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-xl p-2.5 text-slate-400 transition hover:bg-rose-100 hover:text-rose-600"
+                          onClick={async () => {
+                            if (!confirm(`Xóa biên bản kiểm kê ${record.id}?`)) return;
+                            try {
+                              await api.delete(`/stocktaking/${record.id}`);
+                              fetchRecords();
+                            } catch (err: any) {
+                              alert(err.response?.data?.message || 'Không thể xóa biên bản');
+                            }
+                          }}
+                          aria-label="Xóa biên bản"
+                        >
+                          <Trash2 size={17} />
                         </button>
                       </div>
                     </div>
@@ -672,19 +786,7 @@ export default function StocktakingPage() {
                 >
                   <div className={`mb-4 h-5 w-5 rounded-full border-2 ${createMode === 'full' ? 'border-violet-500 bg-white' : 'border-slate-300'}`} />
                   <div className="text-[17px] font-semibold text-slate-950">Toàn bộ kho</div>
-                  <div className="mt-2 text-[14px] text-slate-500">Kiểm kê tất cả sản phẩm hiện có</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setCreateMode('selected')}
-                  className={`rounded-[20px] border px-5 py-5 text-left transition ${
-                    createMode === 'selected' ? 'border-violet-500 bg-violet-50 shadow-[0_0_0_1px_rgba(99,102,241,0.15)]' : 'border-slate-200 bg-white'
-                  }`}
-                >
-                  <Search size={24} className={createMode === 'selected' ? 'text-violet-600' : 'text-slate-400'} />
-                  <div className="mt-3 text-[17px] font-semibold text-slate-950">Chọn SKU cụ thể</div>
-                  <div className="mt-2 text-[14px] text-slate-500">Chỉ kiểm kê các mã được chọn</div>
+                  <div className="mt-2 text-[14px] text-slate-500">Kiểm kê toàn bộ tồn kho theo từng danh mục</div>
                 </button>
 
                 <button
@@ -696,7 +798,7 @@ export default function StocktakingPage() {
                 >
                   <div className={`mb-4 h-5 w-5 rounded-full border-2 ${createMode === 'category' ? 'border-violet-500 bg-white' : 'border-slate-300'}`} />
                   <div className="text-[17px] font-semibold text-slate-950">Theo danh mục</div>
-                  <div className="mt-2 text-[14px] text-slate-500">Kiểm kê tất cả sản phẩm trong một danh mục</div>
+                  <div className="mt-2 text-[14px] text-slate-500">Chốt số lượng thực tế cho một danh mục cụ thể</div>
                 </button>
 
                 <button
@@ -708,74 +810,99 @@ export default function StocktakingPage() {
                 >
                   <div className={`mb-4 h-5 w-5 rounded-full border-2 ${createMode === 'warehouseType' ? 'border-violet-500 bg-white' : 'border-slate-300'}`} />
                   <div className="text-[17px] font-semibold text-slate-950">Theo loại kho</div>
-                  <div className="mt-2 text-[14px] text-slate-500">Kiểm kê hàng theo loại kho chứa</div>
+                  <div className="mt-2 text-[14px] text-slate-500">Tổng hợp các danh mục phát sinh trong loại kho đã chọn</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCreateMode('product')}
+                  className={`rounded-[20px] border px-5 py-5 text-left transition ${
+                    createMode === 'product' ? 'border-violet-500 bg-violet-50 shadow-[0_0_0_1px_rgba(99,102,241,0.15)]' : 'border-slate-200 bg-white'
+                  }`}
+                >
+                  <div className={`mb-4 h-5 w-5 rounded-full border-2 ${createMode === 'product' ? 'border-violet-500 bg-white' : 'border-slate-300'}`} />
+                  <div className="text-[17px] font-semibold text-slate-950">Chọn danh sách SKU</div>
+                  <div className="mt-2 text-[14px] text-slate-500">Chỉ kiểm các mã được chọn</div>
                 </button>
               </div>
             </div>
 
-            {createMode === 'selected' && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <Label className="text-[16px] font-semibold text-slate-950">Danh sách SKU ({selectedCount} đã chọn)</Label>
-                  <div className="relative w-full max-w-[300px]">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      className="h-9 rounded-2xl pl-10"
-                      placeholder="Tìm theo SKU hoặc tên sản phẩm..."
-                      value={skuSearch}
-                      onChange={(e) => setSkuSearch(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="max-h-[260px] overflow-y-auto rounded-[18px] border border-slate-200">
-                  <div className="space-y-1 p-3">
-                    {filteredProducts.map((product) => {
-                      const checked = selectedProductIds.includes(product.id);
-                      return (
-                        <label key={product.id} className="flex cursor-pointer items-center gap-4 rounded-2xl px-4 py-3 transition hover:bg-slate-50">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-slate-300"
-                            checked={checked}
-                            onChange={() => toggleProductSelection(product.id)}
-                          />
-                          <span className="text-[15px] text-slate-900 sm:text-[16px]">
-                            {product.sku} - {product.name}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-
             {createMode === 'category' && (
               <div className="space-y-3">
                 <Label className="text-[16px] font-semibold text-slate-950">Danh mục cần kiểm kê</Label>
-                <select className="form-select" value={selectedCategoryId} onChange={(e) => setSelectedCategoryId(e.target.value)}>
-                  <option value="">Chọn danh mục</option>
-                  {categories.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  options={categories.map((c) => ({ value: c.id, label: c.name }))}
+                  value={selectedCategoryId}
+                  onChange={(v) => setSelectedCategoryId(v)}
+                  placeholder="Chọn danh mục"
+                />
+              </div>
+            )}
+
+            {createMode === 'product' && (
+              <div className="space-y-3">
+                <Label className="text-[16px] font-semibold text-slate-950">
+                  Danh sách SKU ({selectedSkuIds.size} đã chọn)
+                </Label>
+                <Input
+                  type="text"
+                  placeholder="Lọc theo tên sản phẩm hoặc mã SKU..."
+                  value={skuFilterQuery}
+                  onChange={(e) => setSkuFilterQuery(e.target.value)}
+                />
+                <div className="max-h-[280px] overflow-auto rounded-xl border border-slate-200 bg-white">
+                  {allSkuCombos.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-sm text-slate-400">Chưa có sản phẩm nào trong hệ thống</div>
+                  ) : (
+                    allSkuCombos
+                      .filter((combo) => {
+                        if (!skuFilterQuery) return true;
+                        const q = skuFilterQuery.toLowerCase();
+                        const label = [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' ').toLowerCase();
+                        return label.includes(q) || combo.compositeSku.toLowerCase().includes(q);
+                      })
+                      .map((combo) => {
+                        const label = [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' - ');
+                        const isChecked = selectedSkuIds.has(combo.id);
+                        return (
+                          <label
+                            key={combo.id}
+                            className={`flex items-center gap-3 border-b border-slate-100 px-4 py-3 cursor-pointer last:border-b-0 ${isChecked ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                setSelectedSkuIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(combo.id)) next.delete(combo.id);
+                                  else next.add(combo.id);
+                                  return next;
+                                });
+                              }}
+                              className="rounded"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <span className="text-sm font-mono text-indigo-600">{combo.compositeSku}</span>
+                              <span className="text-sm text-slate-600"> - {label}</span>
+                            </div>
+                          </label>
+                        );
+                      })
+                  )}
+                </div>
               </div>
             )}
 
             {createMode === 'warehouseType' && (
               <div className="space-y-3">
                 <Label className="text-[16px] font-semibold text-slate-950">Loại kho cần kiểm kê</Label>
-                <select className="form-select" value={selectedWarehouseTypeId} onChange={(e) => setSelectedWarehouseTypeId(e.target.value)}>
-                  <option value="">Chọn loại kho</option>
-                  {warehouseTypes.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  options={warehouseTypes.map((item) => ({ value: item.id, label: item.name }))}
+                  value={selectedWarehouseTypeId}
+                  onChange={(v) => setSelectedWarehouseTypeId(v)}
+                  placeholder="Chọn loại kho"
+                />
               </div>
             )}
 
@@ -850,7 +977,7 @@ export default function StocktakingPage() {
 
                 <div className="space-y-4">
                   <div className="hidden grid-cols-[minmax(260px,1.7fr)_140px_240px_minmax(220px,1.4fr)] gap-4 px-4 text-[13px] font-semibold uppercase tracking-wide text-slate-400 lg:grid">
-                    <div>San pham / SKU</div>
+                    <div>Danh mục</div>
                     <div className="text-center">He thong</div>
                     <div className="text-center">Thuc te</div>
                     <div>Nguyen nhan chenh lech</div>
@@ -870,8 +997,8 @@ export default function StocktakingPage() {
                           className="grid gap-4 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm lg:grid-cols-[minmax(220px,1.5fr)_120px_220px_minmax(220px,1.3fr)_140px] lg:items-center"
                         >
                           <div>
-                            <div className="text-[18px] font-semibold text-slate-950">{item.product?.sku || '-'}</div>
-                            <div className="mt-1 text-[14px] text-slate-500 sm:text-[15px]">{item.product?.name || '-'}</div>
+                            <div className="text-[18px] font-semibold text-slate-950">{getStocktakingItemCode(item)}</div>
+                            <div className="mt-1 text-[14px] text-slate-500 sm:text-[15px]">{getStocktakingItemLabel(item)}</div>
                           </div>
 
                           <div className="flex items-center justify-between text-[16px] text-slate-500 lg:block lg:text-center">
@@ -990,36 +1117,24 @@ export default function StocktakingPage() {
 
           <div className="grid gap-4">
             <div className="space-y-2">
-              <Label>Sản phẩm</Label>
-              <select
-                className="form-select"
-                value={adjustmentForm.productId}
-                onChange={(e) => setAdjustmentForm((prev) => ({ ...prev, productId: e.target.value }))}
-              >
-                <option value="">Chọn sản phẩm</option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.sku} - {product.name}
-                  </option>
-                ))}
-              </select>
+              <Label>Danh mục</Label>
+              <SearchableSelect
+                options={categories.map((category) => ({ value: category.id, label: category.name }))}
+                value={adjustmentForm.categoryId}
+                onChange={(v) => setAdjustmentForm((prev) => ({ ...prev, categoryId: v }))}
+                placeholder="Chọn danh mục"
+              />
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>Vị trí</Label>
-                <select
-                  className="form-select"
+                <SearchableSelect
+                  options={positions.map((position) => ({ value: position.id, label: position.label }))}
                   value={adjustmentForm.warehousePositionId}
-                  onChange={(e) => setAdjustmentForm((prev) => ({ ...prev, warehousePositionId: e.target.value }))}
-                >
-                  <option value="">Chọn vị trí</option>
-                  {positions.map((position) => (
-                    <option key={position.id} value={position.id}>
-                      {position.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setAdjustmentForm((prev) => ({ ...prev, warehousePositionId: v }))}
+                  placeholder="Chọn vị trí"
+                />
               </div>
 
               <div className="space-y-2">
@@ -1063,7 +1178,7 @@ export default function StocktakingPage() {
             <Button
               type="button"
               onClick={handleAdjustmentSubmit}
-              disabled={!adjustmentForm.productId || !adjustmentForm.quantity || !adjustmentForm.reason.trim()}
+              disabled={!adjustmentForm.categoryId || !adjustmentForm.quantity || !adjustmentForm.reason.trim()}
             >
               <RefreshCcw size={16} />
               Xác nhận điều chỉnh
@@ -1083,7 +1198,7 @@ export default function StocktakingPage() {
               <div className="mx-auto w-full max-w-[900px] rounded-[10px] border border-slate-200 bg-white px-10 py-8 shadow-sm">
                 <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_280px]">
                   <div>
-                    <div className="text-[22px] font-bold uppercase text-slate-950">{generalSettings.brandName || generalSettings.storeName}</div>
+                    <div className="text-[22px] font-bold uppercase text-slate-950">{generalSettings.storeName || generalSettings.brandName}</div>
                     <div className="mt-1 text-[15px] text-slate-700">Địa chỉ: {generalSettings.address || '-'}</div>
                     <div className="text-[15px] text-slate-700">Điện thoại: {generalSettings.phone || '-'}</div>
                   </div>
@@ -1113,8 +1228,8 @@ export default function StocktakingPage() {
                     <thead>
                       <tr className="bg-slate-100">
                         <th className="border border-slate-500 px-3 py-3 text-left font-semibold">STT</th>
-                        <th className="border border-slate-500 px-3 py-3 text-left font-semibold">SKU</th>
-                        <th className="border border-slate-500 px-3 py-3 text-left font-semibold">Tên sản phẩm</th>
+                        <th className="border border-slate-500 px-3 py-3 text-left font-semibold">Mã danh mục</th>
+                        <th className="border border-slate-500 px-3 py-3 text-left font-semibold">Tên danh mục</th>
                         <th className="border border-slate-500 px-3 py-3 text-center font-semibold">Tồn hệ thống</th>
                         <th className="border border-slate-500 px-3 py-3 text-center font-semibold">Tồn thực tế</th>
                         <th className="border border-slate-500 px-3 py-3 text-center font-semibold">Chênh lệch</th>
@@ -1130,8 +1245,8 @@ export default function StocktakingPage() {
                         return (
                           <tr key={item.id}>
                             <td className="border border-slate-500 px-3 py-3 text-center">{index + 1}</td>
-                            <td className="border border-slate-500 px-3 py-3 font-semibold">{item.product?.sku || '-'}</td>
-                            <td className="border border-slate-500 px-3 py-3">{item.product?.name || '-'}</td>
+                            <td className="border border-slate-500 px-3 py-3 font-semibold">{getStocktakingItemCode(item)}</td>
+                            <td className="border border-slate-500 px-3 py-3">{getStocktakingItemLabel(item)}</td>
                             <td className="border border-slate-500 px-3 py-3 text-center font-semibold">{formatNumber(item.systemQuantity)}</td>
                             <td className="border border-slate-500 px-3 py-3 text-center">{actualDisplay}</td>
                             <td className="border border-slate-500 px-3 py-3 text-center">{discrepancyDisplay}</td>
@@ -1199,6 +1314,15 @@ export default function StocktakingPage() {
                     Xac nhan kiem ke
                   </Button>
                 )}
+                {(selectedRecord.status === 'PENDING' || selectedRecord.status === 'APPROVED') && (
+                  <Button
+                    className="h-10 rounded-2xl bg-emerald-600 px-4 hover:bg-emerald-700"
+                    onClick={() => setShowBalanceModal(true)}
+                  >
+                    <RefreshCcw size={16} />
+                    Cân bằng kho
+                  </Button>
+                )}
                 <Button variant="outline" className="h-10 rounded-2xl px-4" onClick={() => handleExportExcel(selectedRecord)}>
                   Excel
                 </Button>
@@ -1222,6 +1346,71 @@ export default function StocktakingPage() {
               <img src={previewImageUrl} alt="Minh chung" className="max-h-[75vh] w-full rounded-xl object-contain" />
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Balance Stock Dialog */}
+      <Dialog open={showBalanceModal} onOpenChange={setShowBalanceModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <RefreshCcw size={18} />
+              Cân bằng kho
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Hệ thống sẽ tự động tạo giao dịch Nhập/Xuất kho để cân bằng tồn kho theo số liệu thực tế trên biên bản kiểm kê.
+            </p>
+
+            {selectedRecord && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+                <div className="text-sm font-semibold text-slate-900">Biên bản: {selectedRecord.id}</div>
+                <div className="text-sm text-slate-600">
+                  {selectedRecord.items.filter((i) => i.discrepancy !== 0).length} dòng có chênh lệch cần điều chỉnh
+                </div>
+                <div className="space-y-1 max-h-40 overflow-auto">
+                  {selectedRecord.items.filter((i) => i.discrepancy !== 0).map((item) => (
+                    <div key={item.id} className="flex justify-between text-xs">
+                      <span className="text-slate-700">{item.itemLabel}</span>
+                      <span className={item.discrepancy > 0 ? 'text-emerald-600 font-semibold' : 'text-rose-600 font-semibold'}>
+                        {item.discrepancy > 0 ? `+${item.discrepancy} (Nhập)` : `${item.discrepancy} (Xuất)`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              Sau khi cân bằng, hệ thống sẽ tự động tạo giao dịch nhập/xuất kho và ghi chú "Điều chỉnh cân bằng kho theo Biên bản kiểm kê".
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBalanceModal(false)}>
+              Đang kiểm tra, chưa cân bằng
+            </Button>
+            <Button
+              className="gap-1 bg-emerald-600 hover:bg-emerald-700"
+              onClick={async () => {
+                if (!selectedRecord) return;
+                try {
+                  const res = await api.post(`/stocktaking/${selectedRecord.id}/balance`);
+                  alert(res.data.message || 'Cân bằng kho thành công!');
+                  setShowBalanceModal(false);
+                  setShowDetailModal(false);
+                  fetchRecords();
+                } catch (err: any) {
+                  alert(err.response?.data?.message || 'Không thể cân bằng kho');
+                }
+              }}
+            >
+              <Check size={14} />
+              Xác nhận cân bằng kho
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </AppLayout>

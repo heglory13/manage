@@ -155,7 +155,7 @@ export class PreliminaryCheckService {
     return check;
   }
 
-  async complete(id: string, status: 'APPROVED' | 'REJECTED') {
+  async complete(id: string, status: 'APPROVED' | 'REJECTED', userRole?: string) {
     const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
     const check = await preliminaryCheckClient.findUnique({
       where: { id },
@@ -165,7 +165,7 @@ export class PreliminaryCheckService {
       throw new NotFoundException('Phieu kiem so bo khong ton tai');
     }
 
-    if (check.status !== PreliminaryCheckStatus.PENDING) {
+    if (userRole !== 'ADMIN' && check.status !== PreliminaryCheckStatus.PENDING) {
       throw new NotFoundException('Phieu da duoc xu ly truoc do');
     }
 
@@ -183,7 +183,7 @@ export class PreliminaryCheckService {
     });
   }
 
-  async update(id: string, dto: Partial<PreliminaryCheckPayload>) {
+  async update(id: string, dto: Partial<PreliminaryCheckPayload>, userRole?: string) {
     const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
     const existing = await preliminaryCheckClient.findUnique({
       where: { id },
@@ -193,7 +193,7 @@ export class PreliminaryCheckService {
       throw new NotFoundException('Phieu kiem so bo khong ton tai');
     }
 
-    if (existing.status !== PreliminaryCheckStatus.PENDING) {
+    if (userRole !== 'ADMIN' && existing.status !== PreliminaryCheckStatus.PENDING) {
       throw new BadRequestException('Chi co the sua phieu kiem so bo khi dang cho kiem tra chi tiet');
     }
 
@@ -224,7 +224,7 @@ export class PreliminaryCheckService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, userRole?: string) {
     const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
     const existing = await preliminaryCheckClient.findUnique({
       where: { id },
@@ -234,7 +234,7 @@ export class PreliminaryCheckService {
       throw new NotFoundException('Phieu kiem so bo khong ton tai');
     }
 
-    if (existing.status !== PreliminaryCheckStatus.PENDING) {
+    if (userRole !== 'ADMIN' && existing.status !== PreliminaryCheckStatus.PENDING) {
       throw new BadRequestException('Chi co the xoa phieu kiem so bo khi chua duoc xu ly');
     }
 

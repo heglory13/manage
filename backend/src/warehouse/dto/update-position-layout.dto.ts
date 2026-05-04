@@ -1,23 +1,23 @@
-import { IsInt, IsOptional, Min } from 'class-validator';
+import { IsNumber, IsOptional, Min } from 'class-validator';
 
 export class UpdatePositionLayoutDto {
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(0)
   x?: number;
 
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(0)
   y?: number;
 
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(60)
   width?: number;
 
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(60)
   height?: number;
 }

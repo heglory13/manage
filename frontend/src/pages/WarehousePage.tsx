@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { SearchableSelect } from '../components/ui/searchable-select';
 
 interface WarehouseType {
   id: string;
@@ -141,7 +142,8 @@ export default function WarehousePage() {
     if (!selectedWarehouseType) return [];
     return storageZones.filter((zone) => {
       const assignedLayout = assignedZoneNames.get(zone.name.toLowerCase());
-      return !assignedLayout || assignedLayout === selectedWarehouseType.name;
+      // Hide zones already assigned to ANY layout (including current one)
+      return !assignedLayout;
     });
   }, [assignedZoneNames, selectedWarehouseType, storageZones]);
 
@@ -169,9 +171,9 @@ export default function WarehousePage() {
     await api.post('/warehouse/positions', {
       layoutId: layout.id,
       label: zone.name,
-      x: 24 + (existingCount % 5) * 132,
-      y: 24 + Math.floor(existingCount / 5) * 112,
-      width: 200,
+      x: 24 + (existingCount % 4) * 240,
+      y: 24 + Math.floor(existingCount / 4) * 180,
+      width: 210,
       height: 150,
       maxCapacity: zone.maxCapacity,
     });
@@ -217,9 +219,15 @@ export default function WarehousePage() {
     await fetchData();
   };
 
+  const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
   const handleDragStart = (e: React.MouseEvent, position: Position) => {
     if (!selectedLayout || selectedLayout.layoutMode !== 'FREE') return;
+    e.preventDefault();
     setDraggingPosition(position);
+    setIsDragging(false);
+    setDragStartPos({ x: e.clientX, y: e.clientY });
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setDragOffset({
       x: e.clientX - rect.left,
@@ -229,6 +237,15 @@ export default function WarehousePage() {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!draggingPosition || !canvasRef.current || !selectedLayout) return;
+
+    // Only start dragging after moving 5px threshold
+    if (!isDragging && dragStartPos) {
+      const dx = Math.abs(e.clientX - dragStartPos.x);
+      const dy = Math.abs(e.clientY - dragStartPos.y);
+      if (dx < 5 && dy < 5) return;
+      setIsDragging(true);
+    }
+
     const canvasRect = canvasRef.current.getBoundingClientRect();
     const newX = Math.max(0, e.clientX - canvasRect.left - dragOffset.x);
     const newY = Math.max(0, e.clientY - canvasRect.top - dragOffset.y);
@@ -249,18 +266,30 @@ export default function WarehousePage() {
   };
 
   const handleMouseUp = async () => {
-    if (!draggingPosition || !selectedLayout) return;
-    const updatedPosition = layouts
-      .find((layout) => layout.id === selectedLayout.id)
-      ?.positions.find((position) => position.id === draggingPosition.id);
-    if (updatedPosition) {
-      await api.patch(`/warehouse/positions/${draggingPosition.id}/layout`, {
-        x: updatedPosition.x,
-        y: updatedPosition.y,
-      });
+    const wasDragging = isDragging;
+    if (!draggingPosition || !selectedLayout) {
+      setDraggingPosition(null);
+      setIsDragging(false);
+      setDragStartPos(null);
+      return;
     }
+
+    if (wasDragging) {
+      const updatedPosition = layouts
+        .find((layout) => layout.id === selectedLayout.id)
+        ?.positions.find((position) => position.id === draggingPosition.id);
+      if (updatedPosition) {
+        await api.patch(`/warehouse/positions/${draggingPosition.id}/layout`, {
+          x: Math.round(updatedPosition.x),
+          y: Math.round(updatedPosition.y),
+        });
+      }
+      await fetchData();
+    }
+
     setDraggingPosition(null);
-    await fetchData();
+    setIsDragging(false);
+    setDragStartPos(null);
   };
 
   if (isLoading) {
@@ -302,18 +331,13 @@ export default function WarehousePage() {
                 </option>
               ))}
             </select>
-            <select
-              className="form-select min-w-[220px]"
+            <SearchableSelect
+              className="min-w-[220px]"
+              options={availableZones.map((zone) => ({ value: zone.id, label: `${zone.name} - Max ${zone.maxCapacity}` }))}
               value={newZoneId}
-              onChange={(e) => setNewZoneId(e.target.value)}
-            >
-              <option value="">Chọn thùng / khu vực để gán</option>
-              {availableZones.map((zone) => (
-                <option key={zone.id} value={zone.id}>
-                  {zone.name} - Max {zone.maxCapacity}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setNewZoneId(v)}
+              placeholder="Chọn thùng / khu vực để gán"
+            />
             <Button onClick={handleAddZone} disabled={!newZoneId || !selectedWarehouseType}>
               <Plus size={16} className="mr-2" />
               Thêm khu vực
@@ -361,9 +385,15 @@ export default function WarehousePage() {
                     ref={canvasRef}
                     className="relative rounded-2xl border-2 border-dashed border-slate-300"
                     style={{
-                      width: Math.max(selectedLayout.canvasWidth || 1200, 1200),
-                      height: Math.max(selectedLayout.canvasHeight || 720, 720),
-                      minWidth: 1200,
+                      width: Math.max(
+                        ...selectedLayout.positions.map((p) => p.x + (p.width || 210) + 40),
+                        800,
+                      ),
+                      height: Math.max(
+                        ...selectedLayout.positions.map((p) => p.y + (p.height || 150) + 40),
+                        400,
+                      ),
+                      minWidth: '100%',
                       background: 'linear-gradient(135deg, #fff7cc 0%, #fff4a8 100%)',
                     }}
                     onMouseMove={handleMouseMove}
@@ -373,7 +403,7 @@ export default function WarehousePage() {
                     {selectedLayout.positions.filter((position) => position.isActive).map((position) => (
                       <div
                         key={position.id}
-                        className="absolute cursor-move rounded-xl border-2 p-2 text-center shadow-sm transition hover:shadow-lg"
+                        className={`absolute rounded-xl border-2 p-2 text-center shadow-sm transition hover:shadow-lg ${isDragging && draggingPosition?.id === position.id ? 'cursor-grabbing' : 'cursor-grab'}`}
                         style={{
                           left: position.x,
                           top: position.y,
@@ -383,11 +413,11 @@ export default function WarehousePage() {
                           borderColor: selectedPosition?.id === position.id ? '#4f46e5' : '#cbd5e1',
                         }}
                         onMouseDown={(e) => handleDragStart(e, position)}
-                        onClick={() => handlePositionClick(position)}
+                        onClick={() => { if (!isDragging) handlePositionClick(position); }}
                       >
                         <div className="truncate text-sm font-bold text-slate-900">{position.label}</div>
                         <div className="mt-1 text-[11px] text-slate-600">
-                          {position.currentStock}/{position.maxCapacity || '∞'}
+                          {position.currentStock}/{position.maxCapacity || '∞'} • {position.skus?.length || 0} SKU
                         </div>
                         {position.skus && position.skus.length > 0 && (
                           <div className="mt-2 space-y-1 text-[10px] leading-4 text-slate-700">
@@ -446,7 +476,7 @@ export default function WarehousePage() {
                   <p className="font-medium text-slate-900">{selectedLayout?.positions.length || 0}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-slate-500">Thùng/khu vực còn có thể gán</p>
+                  <p className="text-sm text-slate-500">Thùng/khu vực chưa được gán</p>
                   <p className="font-medium text-slate-900">{availableZones.length}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -465,6 +495,12 @@ export default function WarehousePage() {
                     <p className="text-sm text-slate-500">Sức chứa</p>
                     <p className="font-medium text-slate-900">
                       {selectedPosition.currentStock} / {selectedPosition.maxCapacity || 'Không giới hạn'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-500">Số loại SKU trong thùng</p>
+                    <p className="font-medium text-slate-900">
+                      {selectedPosition.skus?.length || 0} loại
                     </p>
                   </div>
                   <div>

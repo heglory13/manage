@@ -5,19 +5,15 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { api } from '../../services/api';
-import { formatNumber, formatDateTime } from '../../lib/utils';
+import { formatNumber } from '../../lib/utils';
 import { Download, Search } from 'lucide-react';
 
 interface NxtReportData {
-  sku: string;
-  productName: string;
-  classification: string;
-  color: string;
-  size: string;
-  material: string;
+  categoryId: string | null;
+  categoryName: string;
   openingStock: number;
-  stockIn: number;
-  stockOut: number;
+  totalIn: number;
+  totalOut: number;
   closingStock: number;
 }
 
@@ -69,45 +65,34 @@ export default function NxtReportTab({ warehouseId }: NxtReportTabProps) {
   };
 
   const totalOpening = reportData.reduce((sum, item) => sum + item.openingStock, 0);
-  const totalStockIn = reportData.reduce((sum, item) => sum + item.stockIn, 0);
-  const totalStockOut = reportData.reduce((sum, item) => sum + item.stockOut, 0);
+  const totalStockIn = reportData.reduce((sum, item) => sum + item.totalIn, 0);
+  const totalStockOut = reportData.reduce((sum, item) => sum + item.totalOut, 0);
   const totalClosing = reportData.reduce((sum, item) => sum + item.closingStock, 0);
 
   return (
     <div className="space-y-6">
-      {/* Date Range Selection */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Báo cáo Nhập - Xuất - Tồn (NXT)</CardTitle>
+          <CardTitle className="text-base">Bao cao Nhap - Xuat - Ton theo danh muc</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap gap-4 items-end">
+          <div className="flex flex-wrap items-end gap-4">
             <div>
               <Label>Từ ngày</Label>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1"
-              />
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1" />
             </div>
             <div>
               <Label>Đến ngày</Label>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="mt-1"
-              />
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="mt-1" />
             </div>
             <div className="flex gap-2">
               <Button onClick={fetchReport} disabled={isLoading}>
-                <Search className="w-4 h-4 mr-2" />
+                <Search className="mr-2 h-4 w-4" />
                 Xem báo cáo
               </Button>
               {reportData.length > 0 && (
                 <Button variant="outline" onClick={handleExportExcel}>
-                  <Download className="w-4 h-4 mr-2" />
+                  <Download className="mr-2 h-4 w-4" />
                   Xuất Excel
                 </Button>
               )}
@@ -116,7 +101,6 @@ export default function NxtReportTab({ warehouseId }: NxtReportTabProps) {
         </CardContent>
       </Card>
 
-      {/* Report Table */}
       {reportData.length > 0 && (
         <Card>
           <CardHeader>
@@ -125,7 +109,7 @@ export default function NxtReportTab({ warehouseId }: NxtReportTabProps) {
                 Kết quả NXT: {startDate} - {endDate}
               </CardTitle>
               <div className="text-sm text-muted-foreground">
-                {reportData.length} SKU
+                {reportData.length} danh mục
               </div>
             </div>
           </CardHeader>
@@ -134,11 +118,8 @@ export default function NxtReportTab({ warehouseId }: NxtReportTabProps) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>SKU</TableHead>
-                    <TableHead>Sản phẩm</TableHead>
-                    <TableHead>Tình trạng</TableHead>
-                    <TableHead>Màu</TableHead>
-                    <TableHead>Size</TableHead>
+                    <TableHead>Mã danh mục</TableHead>
+                    <TableHead>Danh mục</TableHead>
                     <TableHead className="text-right">Tồn đầu kỳ</TableHead>
                     <TableHead className="text-right">Nhập trong kỳ</TableHead>
                     <TableHead className="text-right">Xuất trong kỳ</TableHead>
@@ -148,20 +129,16 @@ export default function NxtReportTab({ warehouseId }: NxtReportTabProps) {
                 <TableBody>
                   {reportData.map((item, idx) => (
                     <TableRow key={idx}>
-                      <TableCell className="font-mono text-xs">{item.sku}</TableCell>
-                      <TableCell className="font-medium">{item.productName}</TableCell>
-                      <TableCell>{item.classification}</TableCell>
-                      <TableCell>{item.color}</TableCell>
-                      <TableCell>{item.size}</TableCell>
+                      <TableCell className="font-mono text-xs">{item.categoryId ?? '-'}</TableCell>
+                      <TableCell className="font-medium">{item.categoryName}</TableCell>
                       <TableCell className="text-right">{formatNumber(item.openingStock)}</TableCell>
-                      <TableCell className="text-right text-green-600">+{formatNumber(item.stockIn)}</TableCell>
-                      <TableCell className="text-right text-red-600">-{formatNumber(item.stockOut)}</TableCell>
+                      <TableCell className="text-right text-green-600">+{formatNumber(item.totalIn)}</TableCell>
+                      <TableCell className="text-right text-red-600">-{formatNumber(item.totalOut)}</TableCell>
                       <TableCell className="text-right font-bold">{formatNumber(item.closingStock)}</TableCell>
                     </TableRow>
                   ))}
-                  {/* Total Row */}
                   <TableRow className="bg-muted/50 font-bold">
-                    <TableCell colSpan={5}>Tổng cộng</TableCell>
+                    <TableCell colSpan={2}>Tổng cộng</TableCell>
                     <TableCell className="text-right">{formatNumber(totalOpening)}</TableCell>
                     <TableCell className="text-right text-green-600">+{formatNumber(totalStockIn)}</TableCell>
                     <TableCell className="text-right text-red-600">-{formatNumber(totalStockOut)}</TableCell>
@@ -174,19 +151,18 @@ export default function NxtReportTab({ warehouseId }: NxtReportTabProps) {
         </Card>
       )}
 
-      {/* Quick Actions */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Nhập kho hàng loạt (Excel)</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
+            <p className="mb-4 text-sm text-muted-foreground">
               Tải mẫu Excel và nhập dữ liệu nhập kho hàng loạt từ file.
             </p>
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleDownloadTemplate}>
-                <Download className="w-4 h-4 mr-2" />
+                <Download className="mr-2 h-4 w-4" />
                 Tải mẫu Excel
               </Button>
               <label>
@@ -204,23 +180,11 @@ export default function NxtReportTab({ warehouseId }: NxtReportTabProps) {
             <CardTitle className="text-base">Báo cáo tồn kho</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
+            <p className="mb-4 text-sm text-muted-foreground">
               Xuất báo cáo tồn kho chi tiết theo thời gian.
             </p>
-            <div className="flex gap-2">
-              <div className="flex gap-2 items-end">
-                <div>
-                  <Label className="text-xs">Từ ngày</Label>
-                  <Input type="date" className="mt-1 h-9" />
-                </div>
-                <div>
-                  <Label className="text-xs">Đến ngày</Label>
-                  <Input type="date" className="mt-1 h-9" />
-                </div>
-              </div>
-            </div>
-            <Button variant="outline" className="mt-3">
-              <Download className="w-4 h-4 mr-2" />
+            <Button variant="outline">
+              <Download className="mr-2 h-4 w-4" />
               Xuất báo cáo tồn kho
             </Button>
           </CardContent>

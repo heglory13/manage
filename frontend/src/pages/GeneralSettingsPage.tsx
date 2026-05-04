@@ -148,7 +148,7 @@ export default function GeneralSettingsPage() {
                       <Input value={form.brandName} onChange={(e) => updateField('brandName', e.target.value)} />
                     </div>
                     <div className="space-y-2">
-                      <Label>Tên cửa hàng</Label>
+                      <Label>Tên Công Ty</Label>
                       <Input value={form.storeName} onChange={(e) => updateField('storeName', e.target.value)} />
                     </div>
                     <div className="space-y-2">
@@ -171,7 +171,7 @@ export default function GeneralSettingsPage() {
 
               <div className="grid gap-10 lg:grid-cols-[340px_minmax(0,1fr)]">
                 <div>
-                  <h3 className="text-[28px] font-semibold text-slate-950">Địa chỉ cửa hàng</h3>
+                  <h3 className="text-[28px] font-semibold text-slate-950">Địa chỉ Công Ty</h3>
                   <p className="mt-3 text-[18px] leading-8 text-slate-500">
                     Thông tin này được dùng trong các thông báo và sẽ hiện trên các biên bản in của hệ thống.
                   </p>

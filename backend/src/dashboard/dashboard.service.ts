@@ -4,10 +4,9 @@ import {
   TransactionType,
 } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { buildInventoryValuationBuckets } from '../inventory/inventory-valuation.util.js';
 
 export interface DashboardSummary {
-  totalProducts: number;
+  totalCategories: number;
   totalStock: number;
   totalInventoryValue: number;
   monthlyStockIn: number;
@@ -31,23 +30,17 @@ export interface ChartDataV2 {
   period: 'week' | 'month' | 'quarter';
 }
 
-export interface AlertProduct {
-  id: string;
-  name: string;
-  sku: string;
+export interface AlertCategory {
+  categoryId: string;
+  categoryName: string;
   stock: number;
-  minThreshold: number;
-  maxThreshold: number;
-  category?: { id: string; name: string };
 }
 
-export interface TopProduct {
+export interface TopCategory {
   rank: number;
-  id: string;
-  name: string;
-  sku: string;
+  categoryId: string;
+  categoryName: string;
   stock: number;
-  classificationName?: string;
 }
 
 export interface TopZone {
@@ -62,8 +55,8 @@ export interface TopZone {
 export interface TransactionDetail {
   id: string;
   createdAt: string;
-  productName: string;
-  productSku: string;
+  categoryId: string | null;
+  categoryName: string;
   quantity: number;
   userName: string;
 }
@@ -71,7 +64,7 @@ export interface TransactionDetail {
 export interface OrderPlanDetail {
   id: string;
   createdAt: string;
-  productName: string;
+  categoryName: string;
   quantity: number;
   userName: string;
 }
@@ -108,6 +101,67 @@ export class DashboardService {
     };
   }
 
+  private async getActiveTransactions(where: Record<string, unknown> = {}) {
+    return this.prisma.inventoryTransaction.findMany({
+      where: {
+        status: InventoryTransactionStatus.ACTIVE,
+        ...where,
+      },
+      include: {
+        category: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  private async buildUserNameMap(userIds: Array<string | null | undefined>) {
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))] as string[];
+    if (uniqueUserIds.length === 0) {
+      return new Map<string, string>();
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: uniqueUserIds } },
+      select: { id: true, name: true },
+    });
+
+    return new Map(users.map((user) => [user.id, user.name]));
+  }
+
+  private computeNetStock(
+    transactions: Array<{ type: TransactionType; quantity: number }>,
+  ) {
+    return transactions.reduce((sum, transaction) => {
+      return sum + (transaction.type === TransactionType.STOCK_IN ? transaction.quantity : -transaction.quantity);
+    }, 0);
+  }
+
+  private async getCategoryStockMap() {
+    const categories = await this.prisma.category.findMany({
+      orderBy: { name: 'asc' },
+    });
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: { status: InventoryTransactionStatus.ACTIVE },
+      select: { categoryId: true, type: true, quantity: true },
+    });
+
+    const stockMap = new Map<string, number>();
+    for (const category of categories) {
+      stockMap.set(category.id, 0);
+    }
+
+    for (const transaction of transactions) {
+      if (!transaction.categoryId) continue;
+      const current = stockMap.get(transaction.categoryId) ?? 0;
+      stockMap.set(
+        transaction.categoryId,
+        current + (transaction.type === TransactionType.STOCK_IN ? transaction.quantity : -transaction.quantity),
+      );
+    }
+
+    return { categories, stockMap };
+  }
+
   private async getInventoryValueAt(endDate?: string) {
     const cutoff = endDate
       ? new Date(`${endDate}T23:59:59.999`)
@@ -118,53 +172,26 @@ export class DashboardService {
         createdAt: { lte: cutoff },
         status: InventoryTransactionStatus.ACTIVE,
       },
-      include: {
-        product: true,
-        skuCombo: {
-          include: {
-            classification: true,
-            color: true,
-            size: true,
-            material: true,
-          },
-        },
+      select: {
+        type: true,
+        quantity: true,
+        purchasePrice: true,
       },
-      orderBy: { createdAt: 'asc' },
     });
 
-    return buildInventoryValuationBuckets(
-      transactions.map((transaction) => ({
-        id: transaction.id,
-        productId: transaction.productId,
-        productName: transaction.product.name,
-        productSku: transaction.product.sku,
-        skuComboId: transaction.skuComboId,
-        compositeSku: transaction.skuCombo?.compositeSku ?? null,
-        classification: transaction.skuCombo?.classification?.name ?? null,
-        color: transaction.skuCombo?.color?.name ?? null,
-        size: transaction.skuCombo?.size?.name ?? null,
-        material: transaction.skuCombo?.material?.name ?? null,
-        type: transaction.type,
-        quantity: transaction.quantity,
-        purchasePrice:
-          transaction.purchasePrice
-            ? Number(transaction.purchasePrice)
-            : Number(transaction.product.price ?? 0),
-        createdAt: transaction.createdAt,
-        status: transaction.status,
-      })),
-      undefined,
-      cutoff,
-    ).reduce((sum, bucket) => sum + bucket.closingValue, 0);
+    let totalValue = 0;
+    for (const transaction of transactions) {
+      const value = Number(transaction.purchasePrice ?? 0) * transaction.quantity;
+      totalValue += transaction.type === TransactionType.STOCK_IN ? value : -value;
+    }
+
+    return Math.max(totalValue, 0);
   }
 
   async getSummary(startDate?: string, endDate?: string): Promise<DashboardSummary> {
-    const totalProducts = await this.prisma.product.count();
-
-    const stockResult = await this.prisma.product.aggregate({
-      _sum: { stock: true },
-    });
-    const totalStock = stockResult._sum.stock ?? 0;
+    const { categories, stockMap } = await this.getCategoryStockMap();
+    const totalCategories = categories.length;
+    const totalStock = Array.from(stockMap.values()).reduce((sum, value) => sum + value, 0);
 
     const { start: startOfMonth, end: endOfMonth } = this.getDateRange(
       startDate,
@@ -184,11 +211,9 @@ export class DashboardService {
     });
 
     const monthlyStockIn =
-      monthlyTransactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum
-        .quantity ?? 0;
+      monthlyTransactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum.quantity ?? 0;
     const monthlyStockOut =
-      monthlyTransactions.find((t) => t.type === TransactionType.STOCK_OUT)
-        ?._sum.quantity ?? 0;
+      monthlyTransactions.find((t) => t.type === TransactionType.STOCK_OUT)?._sum.quantity ?? 0;
 
     const orderPlanAggregate = await this.prisma.orderPlan.aggregate({
       where: {
@@ -199,21 +224,19 @@ export class DashboardService {
       },
       _sum: { quantity: true },
     });
-    const totalOrderPlanQuantity = orderPlanAggregate._sum.quantity ?? 0;
 
-    // Capacity ratio
     const config = await this.prisma.warehouseConfig.findFirst();
     const maxCapacity = config?.maxCapacity ?? 1000;
     const capacityRatio = maxCapacity > 0 ? totalStock / maxCapacity : 0;
     const totalInventoryValue = await this.getInventoryValueAt(endDate);
 
     return {
-      totalProducts,
+      totalCategories,
       totalStock,
       totalInventoryValue,
       monthlyStockIn,
       monthlyStockOut,
-      totalOrderPlanQuantity,
+      totalOrderPlanQuantity: orderPlanAggregate._sum.quantity ?? 0,
       capacityRatio,
     };
   }
@@ -225,7 +248,6 @@ export class DashboardService {
     const stockOut: number[] = [];
 
     if (period === 'week') {
-      // Last 12 weeks
       for (let i = 11; i >= 0; i--) {
         const weekEnd = new Date(now);
         weekEnd.setDate(weekEnd.getDate() - i * 7);
@@ -235,30 +257,22 @@ export class DashboardService {
         weekStart.setDate(weekStart.getDate() - 6);
         weekStart.setHours(0, 0, 0, 0);
 
-        const label = `${weekStart.getDate().toString().padStart(2, '0')}/${(weekStart.getMonth() + 1).toString().padStart(2, '0')}`;
-        labels.push(label);
+        labels.push(`${weekStart.getDate().toString().padStart(2, '0')}/${(weekStart.getMonth() + 1).toString().padStart(2, '0')}`);
 
-        const transactions =
-          await this.prisma.inventoryTransaction.groupBy({
-            by: ['type'],
-            where: {
-              status: InventoryTransactionStatus.ACTIVE,
-              createdAt: {
-                gte: weekStart,
-                lte: weekEnd,
-              },
+        const transactions = await this.prisma.inventoryTransaction.groupBy({
+          by: ['type'],
+          where: {
+            status: InventoryTransactionStatus.ACTIVE,
+            createdAt: {
+              gte: weekStart,
+              lte: weekEnd,
             },
-            _sum: { quantity: true },
-          });
+          },
+          _sum: { quantity: true },
+        });
 
-        stockIn.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum
-            .quantity ?? 0,
-        );
-        stockOut.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_OUT)?._sum
-            .quantity ?? 0,
-        );
+        stockIn.push(transactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum.quantity ?? 0);
+        stockOut.push(transactions.find((t) => t.type === TransactionType.STOCK_OUT)?._sum.quantity ?? 0);
       }
     } else {
       const step = period === 'quarter' ? 3 : 1;
@@ -274,158 +288,64 @@ export class DashboardService {
           999,
         );
 
-        const label =
+        labels.push(
           period === 'quarter'
             ? `Q${Math.floor(monthDate.getMonth() / 3) + 1}/${monthDate.getFullYear()}`
-            : `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
-        labels.push(label);
+            : `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`,
+        );
 
-        const transactions =
-          await this.prisma.inventoryTransaction.groupBy({
-            by: ['type'],
-            where: {
-              status: InventoryTransactionStatus.ACTIVE,
-              createdAt: {
-                gte: monthDate,
-                lte: monthEnd,
-              },
+        const transactions = await this.prisma.inventoryTransaction.groupBy({
+          by: ['type'],
+          where: {
+            status: InventoryTransactionStatus.ACTIVE,
+            createdAt: {
+              gte: monthDate,
+              lte: monthEnd,
             },
-            _sum: { quantity: true },
-          });
+          },
+          _sum: { quantity: true },
+        });
 
-        stockIn.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum
-            .quantity ?? 0,
-        );
-        stockOut.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_OUT)?._sum
-            .quantity ?? 0,
-        );
+        stockIn.push(transactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum.quantity ?? 0);
+        stockOut.push(transactions.find((t) => t.type === TransactionType.STOCK_OUT)?._sum.quantity ?? 0);
       }
     }
 
     return { labels, stockIn, stockOut, period };
   }
 
-  // === V3: Alerts ===
-
-  async getAlertsBelowMin(): Promise<AlertProduct[]> {
-    const products = await this.prisma.product.findMany({
-      where: {
-        minThreshold: { gt: 0 },
-        stock: { lt: this.prisma.product.fields?.minThreshold as unknown as number ?? 0 },
-      },
-      include: { category: true },
-    });
-
-    // Prisma doesn't support comparing two columns directly, so we filter in JS
-    const allProducts = await this.prisma.product.findMany({
-      where: { minThreshold: { gt: 0 } },
-      include: { category: true },
-    });
-
-    return allProducts
-      .filter((p) => p.stock < p.minThreshold)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        sku: p.sku,
-        stock: p.stock,
-        minThreshold: p.minThreshold,
-        maxThreshold: p.maxThreshold,
-        category: p.category ? { id: p.category.id, name: p.category.name } : undefined,
-      }));
+  async getAlertsBelowMin(): Promise<AlertCategory[]> {
+    const { categories, stockMap } = await this.getCategoryStockMap();
+    return categories
+      .map((category) => ({
+        categoryId: category.id,
+        categoryName: category.name,
+        stock: stockMap.get(category.id) ?? 0,
+      }))
+      .filter((item) => item.stock <= 0);
   }
 
-  async getAlertsAboveMax(): Promise<AlertProduct[]> {
-    const allProducts = await this.prisma.product.findMany({
-      where: { maxThreshold: { gt: 0 } },
-      include: { category: true },
-    });
-
-    return allProducts
-      .filter((p) => p.stock > p.maxThreshold)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        sku: p.sku,
-        stock: p.stock,
-        minThreshold: p.minThreshold,
-        maxThreshold: p.maxThreshold,
-        category: p.category ? { id: p.category.id, name: p.category.name } : undefined,
-      }));
+  async getAlertsAboveMax(): Promise<AlertCategory[]> {
+    return [];
   }
 
-  // === V3: Top Products & Zones ===
+  async getTopCategories(type: 'highest' | 'lowest', limit: number = 20): Promise<TopCategory[]> {
+    const { categories, stockMap } = await this.getCategoryStockMap();
 
-  async getTopProducts(type: 'highest' | 'lowest', limit: number = 20): Promise<TopProduct[]> {
-    const transactions = await this.prisma.inventoryTransaction.findMany({
-      where: {
-        status: InventoryTransactionStatus.ACTIVE,
-        skuComboId: { not: null },
-      },
-      include: {
-        product: true,
-        skuCombo: {
-          include: {
-            classification: true,
-          },
-        },
-      },
-    });
-
-    const classificationTotals = new Map<
-      string,
-      {
-        id: string;
-        name: string;
-        sku: string;
-        stock: number;
-        classificationName: string;
-      }
-    >();
-
-    for (const transaction of transactions) {
-      const classification = transaction.skuCombo?.classification;
-      if (!classification) {
-        continue;
-      }
-
-      const current = classificationTotals.get(classification.id) ?? {
-        id: classification.id,
-        name: classification.name,
-        sku: classification.name,
-        stock: 0,
-        classificationName: classification.name,
-      };
-
-      current.stock +=
-        transaction.type === TransactionType.STOCK_IN
-          ? transaction.quantity
-          : -transaction.quantity;
-
-      classificationTotals.set(classification.id, current);
-    }
-
-    return Array.from(classificationTotals.values())
+    return categories
+      .map((category) => ({
+        categoryId: category.id,
+        categoryName: category.name,
+        stock: stockMap.get(category.id) ?? 0,
+      }))
       .sort((a, b) => {
-        const stockDiff =
-          type === 'highest' ? b.stock - a.stock : a.stock - b.stock;
-
-        if (stockDiff !== 0) {
-          return stockDiff;
-        }
-
-        return a.name.localeCompare(b.name, 'vi');
+        const diff = type === 'highest' ? b.stock - a.stock : a.stock - b.stock;
+        return diff !== 0 ? diff : a.categoryName.localeCompare(b.categoryName, 'vi');
       })
       .slice(0, limit)
       .map((item, index) => ({
         rank: index + 1,
-        id: item.id,
-        name: item.name,
-        sku: item.sku,
-        stock: item.stock,
-        classificationName: item.classificationName,
+        ...item,
       }));
   }
 
@@ -447,24 +367,8 @@ export class DashboardService {
       }))
       .sort((a, b) => {
         const usageDiff =
-          type === 'highest'
-            ? b.usagePercent - a.usagePercent
-            : a.usagePercent - b.usagePercent;
-
-        if (usageDiff !== 0) {
-          return usageDiff;
-        }
-
-        const stockDiff =
-          type === 'highest'
-            ? b.currentStock - a.currentStock
-            : a.currentStock - b.currentStock;
-
-        if (stockDiff !== 0) {
-          return stockDiff;
-        }
-
-        return a.name.localeCompare(b.name, 'vi');
+          type === 'highest' ? b.usagePercent - a.usagePercent : a.usagePercent - b.usagePercent;
+        return usageDiff !== 0 ? usageDiff : a.name.localeCompare(b.name, 'vi');
       })
       .slice(0, limit)
       .map((zone, index) => ({
@@ -473,92 +377,36 @@ export class DashboardService {
       }));
   }
 
-  // === V3: Chart V2 (3 lines) ===
-
   static getWeekCutoff(date: Date): Date {
-    // Week cutoff = Sunday 12:00 GMT+7 = Sunday 05:00 UTC
-    // Find the most recent Sunday 05:00 UTC that is <= date
     const d = new Date(date);
-    const day = d.getUTCDay(); // 0 = Sunday
-    // Go back to the most recent Sunday
+    const day = d.getUTCDay();
     d.setUTCDate(d.getUTCDate() - day);
-    d.setUTCHours(5, 0, 0, 0); // 05:00 UTC = 12:00 GMT+7
-
-    // If the cutoff is in the future (e.g., date is Sunday before 05:00 UTC),
-    // go back one more week
+    d.setUTCHours(5, 0, 0, 0);
     if (d.getTime() > date.getTime()) {
       d.setUTCDate(d.getUTCDate() - 7);
     }
-
     return d;
   }
 
   async getChartDataV2(period: 'week' | 'month' | 'quarter' = 'month'): Promise<ChartDataV2> {
+    const chart = await this.getChartData(period);
+    const inventory: number[] = [];
     const now = new Date();
-    const labels: string[] = [];
-    const stockInArr: number[] = [];
-    const stockOutArr: number[] = [];
-    const inventoryArr: number[] = [];
 
     if (period === 'week') {
-      // Last 12 weeks, cutoff = Sunday 12:00 GMT+7 (05:00 UTC)
       const currentCutoff = DashboardService.getWeekCutoff(now);
-
       for (let i = 11; i >= 0; i--) {
-        const weekEnd = new Date(currentCutoff);
-        weekEnd.setUTCDate(weekEnd.getUTCDate() - i * 7);
+        const cutoff = new Date(currentCutoff);
+        cutoff.setUTCDate(cutoff.getUTCDate() - i * 7);
 
-        const weekStart = new Date(weekEnd);
-        weekStart.setUTCDate(weekStart.getUTCDate() - 7);
-
-        const label = `${weekEnd.getUTCDate().toString().padStart(2, '0')}/${(weekEnd.getUTCMonth() + 1).toString().padStart(2, '0')}`;
-        labels.push(label);
-
-        const transactions = await this.prisma.inventoryTransaction.groupBy({
-          by: ['type'],
+        const transactions = await this.prisma.inventoryTransaction.findMany({
           where: {
             status: InventoryTransactionStatus.ACTIVE,
-            createdAt: {
-              gt: weekStart,
-              lte: weekEnd,
-            },
-          },
-          _sum: { quantity: true },
-        });
-
-        stockInArr.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum.quantity ?? 0,
-        );
-        stockOutArr.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_OUT)?._sum.quantity ?? 0,
-        );
-
-        // Inventory at cutoff: sum of all product stock at that point
-        // We approximate by computing: current stock - net changes after cutoff
-        const stockResult = await this.prisma.product.aggregate({
-          _sum: { stock: true },
-        });
-        const currentTotalStock = stockResult._sum.stock ?? 0;
-
-        // Get net changes after this cutoff
-        const changesAfter = await this.prisma.inventoryTransaction.findMany({
-          where: {
-            status: InventoryTransactionStatus.ACTIVE,
-            createdAt: { gt: weekEnd },
+            createdAt: { lte: cutoff },
           },
           select: { type: true, quantity: true },
         });
-
-        let netAfter = 0;
-        for (const tx of changesAfter) {
-          if (tx.type === TransactionType.STOCK_IN) {
-            netAfter += tx.quantity;
-          } else {
-            netAfter -= tx.quantity;
-          }
-        }
-
-        inventoryArr.push(currentTotalStock - netAfter);
+        inventory.push(this.computeNetStock(transactions));
       }
     } else {
       const step = period === 'quarter' ? 3 : 1;
@@ -568,103 +416,46 @@ export class DashboardService {
           monthDate.getFullYear(),
           monthDate.getMonth() + step,
           0,
-          23, 59, 59, 999,
+          23,
+          59,
+          59,
+          999,
         );
 
-        const label =
-          period === 'quarter'
-            ? `Q${Math.floor(monthDate.getMonth() / 3) + 1}/${monthDate.getFullYear()}`
-            : `${(monthDate.getMonth() + 1).toString().padStart(2, '0')}/${monthDate.getFullYear()}`;
-        labels.push(label);
-
-        const transactions = await this.prisma.inventoryTransaction.groupBy({
-          by: ['type'],
+        const transactions = await this.prisma.inventoryTransaction.findMany({
           where: {
             status: InventoryTransactionStatus.ACTIVE,
-            createdAt: {
-              gte: monthDate,
-              lte: monthEnd,
-            },
-          },
-          _sum: { quantity: true },
-        });
-
-        stockInArr.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_IN)?._sum.quantity ?? 0,
-        );
-        stockOutArr.push(
-          transactions.find((t) => t.type === TransactionType.STOCK_OUT)?._sum.quantity ?? 0,
-        );
-
-        // Inventory at month end
-        const stockResult = await this.prisma.product.aggregate({
-          _sum: { stock: true },
-        });
-        const currentTotalStock = stockResult._sum.stock ?? 0;
-
-        const changesAfter = await this.prisma.inventoryTransaction.findMany({
-          where: {
-            status: InventoryTransactionStatus.ACTIVE,
-            createdAt: { gt: monthEnd },
+            createdAt: { lte: monthEnd },
           },
           select: { type: true, quantity: true },
         });
-
-        let netAfter = 0;
-        for (const tx of changesAfter) {
-          if (tx.type === TransactionType.STOCK_IN) {
-            netAfter += tx.quantity;
-          } else {
-            netAfter -= tx.quantity;
-          }
-        }
-
-        inventoryArr.push(currentTotalStock - netAfter);
+        inventory.push(this.computeNetStock(transactions));
       }
     }
 
-    return { labels, stockIn: stockInArr, stockOut: stockOutArr, inventory: inventoryArr, period };
+    return { ...chart, inventory };
   }
 
-  // === V3: Detail Drill-down ===
-
-  async getDetailProducts(
+  async getDetailCategories(
     page: number = 1,
     limit: number = 20,
-    startDate?: string,
-    endDate?: string,
+    _startDate?: string,
+    _endDate?: string,
   ): Promise<PaginatedResponse<unknown>> {
-    const skip = (page - 1) * limit;
-    const { start, end } = this.getDateRange(startDate, endDate);
-    const [data, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where: {
-          createdAt: {
-            gte: start,
-            lte: end,
-          },
-        },
-        skip,
-        take: limit,
-        include: { category: true },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.product.count({
-        where: {
-          createdAt: {
-            gte: start,
-            lte: end,
-          },
-        },
-      }),
-    ]);
+    const { categories, stockMap } = await this.getCategoryStockMap();
+    const rows = categories.map((category) => ({
+      categoryId: category.id,
+      categoryName: category.name,
+      stock: stockMap.get(category.id) ?? 0,
+    }));
 
+    const skip = (page - 1) * limit;
     return {
-      data,
-      total,
+      data: rows.slice(skip, skip + limit),
+      total: rows.length,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(rows.length / limit) || 1,
     };
   }
 
@@ -674,23 +465,7 @@ export class DashboardService {
     _startDate?: string,
     _endDate?: string,
   ): Promise<PaginatedResponse<unknown>> {
-    const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
-      this.prisma.product.findMany({
-        skip,
-        take: limit,
-        orderBy: { stock: 'desc' },
-      }),
-      this.prisma.product.count(),
-    ]);
-
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return this.getDetailCategories(page, limit);
   }
 
   async getDetailTransactions(
@@ -700,26 +475,21 @@ export class DashboardService {
     startDate?: string,
     endDate?: string,
   ): Promise<PaginatedResponse<TransactionDetail>> {
-    const { start: startOfMonth, end: endOfMonth } = this.getDateRange(
-      startDate,
-      endDate,
-    );
-    const skip = (page - 1) * limit;
-
+    const { start, end } = this.getDateRange(startDate, endDate);
     const txType = type === 'stock_in' ? TransactionType.STOCK_IN : TransactionType.STOCK_OUT;
+    const skip = (page - 1) * limit;
 
     const [transactions, total] = await Promise.all([
       this.prisma.inventoryTransaction.findMany({
         where: {
           type: txType,
           status: InventoryTransactionStatus.ACTIVE,
-          createdAt: { gte: startOfMonth, lte: endOfMonth },
+          createdAt: { gte: start, lte: end },
         },
         skip,
         take: limit,
         include: {
-          product: true,
-          user: { select: { name: true } },
+          category: true,
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -727,26 +497,27 @@ export class DashboardService {
         where: {
           type: txType,
           status: InventoryTransactionStatus.ACTIVE,
-          createdAt: { gte: startOfMonth, lte: endOfMonth },
+          createdAt: { gte: start, lte: end },
         },
       }),
     ]);
-
-    const data: TransactionDetail[] = transactions.map((tx) => ({
-      id: tx.id,
-      createdAt: tx.createdAt.toISOString(),
-      productName: tx.product.name,
-      productSku: tx.product.sku,
-      quantity: tx.quantity,
-      userName: tx.user.name,
-    }));
+    const userNameMap = await this.buildUserNameMap(
+      transactions.map((tx) => tx.userId),
+    );
 
     return {
-      data,
+      data: transactions.map((tx) => ({
+        id: tx.id,
+        createdAt: tx.createdAt.toISOString(),
+        categoryId: tx.categoryId,
+        categoryName: tx.category?.name ?? 'Danh mục',
+        quantity: tx.quantity,
+        userName: userNameMap.get(tx.userId) ?? 'NgÆ°á»i dÃ¹ng Ä‘Ã£ xÃ³a',
+      })),
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(total / limit) || 1,
     };
   }
 
@@ -779,20 +550,18 @@ export class DashboardService {
       }),
     ]);
 
-    const data: OrderPlanDetail[] = rows.map((row) => ({
-      id: row.id,
-      createdAt: row.createdAt.toISOString(),
-      productName: row.category?.name ?? 'Ke hoach dat hang',
-      quantity: row.quantity,
-      userName: row.creator.name,
-    }));
-
     return {
-      data,
+      data: rows.map((row) => ({
+        id: row.id,
+        createdAt: row.createdAt.toISOString(),
+        categoryName: row.category?.name ?? 'Kế hoạch đặt hàng',
+        quantity: row.quantity,
+        userName: row.creator.name,
+      })),
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(total / limit) || 1,
     };
   }
 }

@@ -1,7 +1,6 @@
 import {
   IsArray,
   IsDateString,
-  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -12,8 +11,7 @@ import { Type } from 'class-transformer';
 
 export class StockInBatchItemDto {
   @IsString()
-  @IsNotEmpty()
-  productId!: string;
+  categoryId!: string;
 
   @IsNumber()
   @Min(1, { message: 'So luong nhap kho phai lon hon 0' })
@@ -23,9 +21,10 @@ export class StockInBatchItemDto {
   @Min(1, { message: 'Gia nhap phai lon hon 0' })
   purchasePrice!: number;
 
+  @IsOptional()
   @IsNumber()
-  @Min(1, { message: 'Gia ban phai lon hon 0' })
-  salePrice!: number;
+  @Min(0)
+  salePrice?: number;
 
   @IsOptional()
   @IsString()
@@ -46,6 +45,10 @@ export class StockInBatchItemDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  skuComboId?: string;
 }
 
 export class StockInBatchDto {

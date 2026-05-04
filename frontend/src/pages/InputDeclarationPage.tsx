@@ -86,9 +86,13 @@ export default function InputDeclarationPage() {
   const [importLoading, setImportLoading] = useState(false);
   const [importResult, setImportResult] = useState<{
     success: boolean;
+    partialSuccess?: boolean;
     totalRows: number;
     importedRows: number;
+    errorRows?: number[];
     createdCounts: Record<string, number>;
+    updatedCounts?: Record<string, number>;
+    skippedCounts?: Record<string, number>;
     errors?: Array<{ row: number; field: string; message: string }>;
   } | null>(null);
 
@@ -315,7 +319,7 @@ export default function InputDeclarationPage() {
 
       setImportResult(res.data);
 
-      if (res.data.success) {
+      if (res.data.success || res.data.partialSuccess) {
         await fetchDeclarations();
         setImportFile(null);
       }
@@ -541,19 +545,48 @@ export default function InputDeclarationPage() {
                 )}
               </div>
 
-              {importResult && !importResult.success && (
+              {importResult && !importResult.success && !importResult.partialSuccess && (
                 <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  <p className="font-medium">File Excel khong hop le</p>
-                  <p className="mt-1">He thong chua nhap du lieu nao. Vui long sua file va thu lai.</p>
-                  <div className="mt-2 space-y-1">
-                    {(importResult.errors || []).slice(0, 10).map((item, index) => (
+                  <p className="font-medium">File Excel khong hop le - Khong co dong nao duoc nhap</p>
+                  <p className="mt-1">Tong so {importResult.totalRows} dong du lieu, tat ca deu bi loi. Vui long sua file va thu lai.</p>
+                  <div className="mt-2 space-y-1 max-h-80 overflow-y-auto">
+                    {(importResult.errors || []).map((item, index) => (
                       <p key={`${item.row}-${item.field}-${index}`}>
-                        Dong {item.row} - {item.field}: {item.message}
+                        <span className="font-medium">Dong {item.row}</span> - <span className="font-medium">{item.field}</span>: {item.message}
                       </p>
                     ))}
-                    {(importResult.errors || []).length > 10 && (
-                      <p>... va {(importResult.errors || []).length - 10} loi khac</p>
+                  </div>
+                </div>
+              )}
+
+              {importResult?.partialSuccess && (
+                <div className="mb-4 space-y-3">
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                    <p className="font-medium">Da nhap thanh cong {importResult.importedRows}/{importResult.totalRows} dong</p>
+                    <p className="mt-1">
+                      <span className="font-medium">Tao moi:</span> Danh muc {importResult.createdCounts.categories || 0}, Phan loai {importResult.createdCounts.classifications || 0}, Mau sac {importResult.createdCounts.colors || 0}, Kich thuoc {importResult.createdCounts.sizes || 0}, Chat lieu {importResult.createdCounts.materials || 0}, Tinh trang {importResult.createdCounts.productConditions || 0}, Khu vuc {importResult.createdCounts.storageZones || 0}, Loai kho {importResult.createdCounts.warehouseTypes || 0}.
+                    </p>
+                    {importResult.skippedCounts && Object.values(importResult.skippedCounts).some(v => v > 0) && (
+                      <p className="mt-1">
+                        <span className="font-medium">Da ton tai (bo qua):</span> Danh muc {importResult.skippedCounts.categories || 0}, Phan loai {importResult.skippedCounts.classifications || 0}, Mau sac {importResult.skippedCounts.colors || 0}, Kich thuoc {importResult.skippedCounts.sizes || 0}, Chat lieu {importResult.skippedCounts.materials || 0}, Tinh trang {importResult.skippedCounts.productConditions || 0}, Khu vuc {importResult.skippedCounts.storageZones || 0}, Loai kho {importResult.skippedCounts.warehouseTypes || 0}.
+                      </p>
                     )}
+                    {(importResult.updatedCounts?.storageZones || 0) > 0 && (
+                      <p className="mt-1">
+                        <span className="font-medium">Cap nhat suc chua:</span> {importResult.updatedCounts?.storageZones} khu vuc.
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    <p className="font-medium">Co {(importResult.errors || []).length} loi o {(importResult.errorRows || []).length} dong khong the nhap</p>
+                    <p className="mt-1 text-xs">Cac dong loi: {(importResult.errorRows || []).join(', ')}</p>
+                    <div className="mt-2 space-y-1 max-h-80 overflow-y-auto">
+                      {(importResult.errors || []).map((item, index) => (
+                        <p key={`${item.row}-${item.field}-${index}`}>
+                          <span className="font-medium">Dong {item.row}</span> - <span className="font-medium">{item.field}</span>: {item.message}
+                        </p>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -563,8 +596,18 @@ export default function InputDeclarationPage() {
                   <p className="font-medium">Import Excel thanh cong</p>
                   <p className="mt-1">Da xu ly {importResult.totalRows} dong du lieu.</p>
                   <p className="mt-1">
-                    Tao moi: Danh muc {importResult.createdCounts.categories || 0}, Phan loai {importResult.createdCounts.classifications || 0}, Mau sac {importResult.createdCounts.colors || 0}, Kich thuoc {importResult.createdCounts.sizes || 0}, Chat lieu {importResult.createdCounts.materials || 0}, Tinh trang {importResult.createdCounts.productConditions || 0}, Khu vuc {importResult.createdCounts.storageZones || 0}, Loai kho {importResult.createdCounts.warehouseTypes || 0}.
+                    <span className="font-medium">Tao moi:</span> Danh muc {importResult.createdCounts.categories || 0}, Phan loai {importResult.createdCounts.classifications || 0}, Mau sac {importResult.createdCounts.colors || 0}, Kich thuoc {importResult.createdCounts.sizes || 0}, Chat lieu {importResult.createdCounts.materials || 0}, Tinh trang {importResult.createdCounts.productConditions || 0}, Khu vuc {importResult.createdCounts.storageZones || 0}, Loai kho {importResult.createdCounts.warehouseTypes || 0}.
                   </p>
+                  {importResult.skippedCounts && Object.values(importResult.skippedCounts).some(v => v > 0) && (
+                    <p className="mt-1">
+                      <span className="font-medium">Da ton tai (bo qua):</span> Danh muc {importResult.skippedCounts.categories || 0}, Phan loai {importResult.skippedCounts.classifications || 0}, Mau sac {importResult.skippedCounts.colors || 0}, Kich thuoc {importResult.skippedCounts.sizes || 0}, Chat lieu {importResult.skippedCounts.materials || 0}, Tinh trang {importResult.skippedCounts.productConditions || 0}, Khu vuc {importResult.skippedCounts.storageZones || 0}, Loai kho {importResult.skippedCounts.warehouseTypes || 0}.
+                    </p>
+                  )}
+                  {(importResult.updatedCounts?.storageZones || 0) > 0 && (
+                    <p className="mt-1">
+                      <span className="font-medium">Cap nhat suc chua:</span> {importResult.updatedCounts?.storageZones} khu vuc.
+                    </p>
+                  )}
                 </div>
               )}
 

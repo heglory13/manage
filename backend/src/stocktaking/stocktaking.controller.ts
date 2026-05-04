@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client/index';
 import { CurrentUser } from '../auth/decorators/index.js';
 import { Roles } from '../auth/decorators/index.js';
@@ -23,6 +23,7 @@ export class StocktakingController {
       dto.cutoffTime,
       dto.categoryIds,
       dto.warehouseTypeIds,
+      dto.skuComboIds,
     );
   }
 
@@ -43,7 +44,7 @@ export class StocktakingController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.stocktakingService.approve(id, user.userId);
+    return this.stocktakingService.approve(id, user.userId, user.role);
   }
 
   @Patch(':id/reject')
@@ -53,12 +54,27 @@ export class StocktakingController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.stocktakingService.reject(id, user.userId);
+    return this.stocktakingService.reject(id, user.userId, undefined, user.role);
   }
 
   @Get(':id/history')
   async getStatusHistory(@Param('id') id: string) {
     return this.stocktakingService.getStatusHistory(id);
+  }
+
+  @Delete(':id')
+  @Roles(Role.ADMIN)
+  async remove(@Param('id') id: string) {
+    return this.stocktakingService.remove(id);
+  }
+
+  @Post(':id/balance')
+  async balanceStock(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    return this.stocktakingService.balanceStock(id, user.userId);
   }
 
   @Get(':id')

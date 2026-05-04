@@ -13,7 +13,6 @@ import { WarehouseService } from './warehouse.service.js';
 import {
   CreateLayoutDto,
   UpdateLayoutDto,
-  AssignProductDto,
   MovePositionDto,
   UpdateLabelDto,
   UpdateCapacityDto,
@@ -72,17 +71,6 @@ export class WarehouseController {
   @Get('layouts/with-skus')
   async getLayoutsWithSkus() {
     return this.warehouseService.getLayoutWithSkus();
-  }
-
-  @Patch('positions/:positionId/product')
-  async assignProduct(
-    @Param('positionId') positionId: string,
-    @Body() dto: AssignProductDto,
-  ) {
-    return this.warehouseService.assignProductToPosition(
-      positionId,
-      dto.productId ?? null,
-    );
   }
 
   @Patch('positions/:id/move')

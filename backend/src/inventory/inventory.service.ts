@@ -37,7 +37,7 @@ export interface PaginatedResponse<T> {
 
 export interface InventoryTransactionHistoryItem {
   id: string;
-  productId: string;
+  categoryId: string | null;
   createdAt: string;
   actualStockDate: string | null;
   kind: 'ALL' | 'STOCK_IN' | 'STOCK_OUT' | 'ADJUSTMENT';
@@ -47,16 +47,70 @@ export interface InventoryTransactionHistoryItem {
   signedQuantity: number;
   purchasePrice: number | null;
   salePrice: number | null;
-  productName: string;
-  productSku: string;
+  categoryName: string;
   positionLabel: string | null;
+  warehouseTypeName: string | null;
+  storageZoneName: string | null;
+  productName: string | null;
+  sku: string | null;
   userName: string;
   note: string;
 }
 
+type StockInOptions = {
+  purchasePrice?: number;
+  salePrice?: number;
+  skuComboId?: string;
+  productConditionId?: string;
+  storageZoneId?: string;
+  warehousePositionId?: string;
+  preliminaryCheckId?: string;
+  actualStockDate?: string;
+  notes?: string;
+};
+
+type StockInBatchItemInput = {
+  categoryId: string;
+  quantity: number;
+  purchasePrice: number;
+  salePrice?: number;
+  productConditionId?: string;
+  storageZoneId?: string;
+  warehousePositionId?: string;
+  actualStockDate?: string;
+  notes?: string;
+};
+
+type CategoryInventoryRow = {
+  id: string;
+  name: string;
+  stock: number;
+  latestProductConditionName: string | null;
+  latestSkuCombo: unknown | null;
+  latestActualStockDate: string | null;
+  latestCreatedAt: Date | null;
+  latestSalePrice: number | null;
+  latestPurchasePrice: number | null;
+  positionLabels: string[];
+};
+
 @Injectable()
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async buildUserNameMap(userIds: Array<string | null | undefined>) {
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))] as string[];
+    if (uniqueUserIds.length === 0) {
+      return new Map<string, string>();
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: uniqueUserIds } },
+      select: { id: true, name: true },
+    });
+
+    return new Map(users.map((user) => [user.id, user.name]));
+  }
 
   private toPrismaDecimal(value?: number | null) {
     if (value === undefined || value === null) return undefined;
@@ -68,10 +122,22 @@ export class InventoryService {
     return Number(value);
   }
 
-  private async getLatestActivePurchasePrice(productId: string) {
+  private async ensureCategoryExists(categoryId: string) {
+    const category = await this.prisma.category.findUnique({
+      where: { id: categoryId },
+    });
+
+    if (!category) {
+      throw new NotFoundException('Danh mục không tồn tại');
+    }
+
+    return category;
+  }
+
+  private async getLatestActivePurchasePrice(categoryId: string) {
     const transaction = await this.prisma.inventoryTransaction.findFirst({
       where: {
-        productId,
+        categoryId,
         type: TransactionType.STOCK_IN,
         status: InventoryTransactionStatus.ACTIVE,
         purchasePrice: { not: null },
@@ -83,20 +149,36 @@ export class InventoryService {
     return this.asNumber(transaction?.purchasePrice) ?? 0;
   }
 
+  async getCurrentStockByCategory(categoryId: string): Promise<number> {
+    await this.ensureCategoryExists(categoryId);
+
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: {
+        categoryId,
+        status: InventoryTransactionStatus.ACTIVE,
+      },
+      select: {
+        type: true,
+        quantity: true,
+      },
+    });
+
+    return transactions.reduce((sum, transaction) => {
+      return sum + (transaction.type === TransactionType.STOCK_IN ? transaction.quantity : -transaction.quantity);
+    }, 0);
+  }
+
   private async ensureCanApplyStockDelta(
     type: TransactionType,
     quantity: number,
-    productId: string,
+    categoryId?: string | null,
     warehousePositionId?: string | null,
     storageZoneId?: string | null,
   ) {
     if (type !== TransactionType.STOCK_OUT) return;
 
-    const [product, position, zone] = await Promise.all([
-      this.prisma.product.findUnique({
-        where: { id: productId },
-        select: { stock: true },
-      }),
+    const [currentStock, position, zone] = await Promise.all([
+      categoryId ? this.getCurrentStockByCategory(categoryId) : Promise.resolve(0),
       warehousePositionId
         ? this.prisma.warehousePosition.findUnique({
             where: { id: warehousePositionId },
@@ -111,16 +193,16 @@ export class InventoryService {
         : Promise.resolve(null),
     ]);
 
-    if (!product || product.stock < quantity) {
-      throw new BadRequestException('Khong du ton kho de thuc hien thao tac nay');
+    if (categoryId && currentStock < quantity) {
+      throw new BadRequestException('Không thể xuất quá số lượng tồn kho hiện tại');
     }
 
     if (position && position.currentStock < quantity) {
-      throw new BadRequestException('Vi tri kho hien tai khong du ton kho');
+      throw new BadRequestException('Vị trí kho hiện tại không đủ tồn kho');
     }
 
     if (zone && zone.currentStock < quantity) {
-      throw new BadRequestException('Khu vuc hien tai khong du ton kho');
+      throw new BadRequestException('Khu vực hiện tại không đủ tồn kho');
     }
   }
 
@@ -144,7 +226,7 @@ export class InventoryService {
 
   private async applyTransactionImpact(
     transaction: {
-      productId: string;
+      categoryId?: string | null;
       type: TransactionType;
       quantity: number;
       warehousePositionId?: string | null;
@@ -163,7 +245,7 @@ export class InventoryService {
     await this.ensureCanApplyStockDelta(
       effectiveType,
       transaction.quantity,
-      transaction.productId,
+      transaction.categoryId,
       transaction.warehousePositionId,
       transaction.storageZoneId,
     );
@@ -173,12 +255,7 @@ export class InventoryService {
         ? { increment: transaction.quantity }
         : { decrement: transaction.quantity };
 
-    const ops: Prisma.PrismaPromise<unknown>[] = [
-      this.prisma.product.update({
-        where: { id: transaction.productId },
-        data: { stock: delta },
-      }),
-    ];
+    const ops: Prisma.PrismaPromise<unknown>[] = [];
 
     if (transaction.warehousePositionId) {
       ops.push(
@@ -198,52 +275,150 @@ export class InventoryService {
       );
     }
 
-    await this.prisma.$transaction(ops);
+    if (ops.length > 0) {
+      await this.prisma.$transaction(ops);
+    }
     await this.syncPreliminaryCheckStatus(transaction.preliminaryCheckId);
   }
 
-  computeBusinessStatus(product: {
-    stock: number;
-    minThreshold: number;
-    isDiscontinued: boolean;
-  }): 'CON_HANG' | 'HET_HANG' | 'SAP_HET' | 'NGUNG_KD' {
-    if (product.isDiscontinued) return 'NGUNG_KD';
-    if (product.stock === 0) return 'HET_HANG';
-    if (product.stock < product.minThreshold) return 'SAP_HET';
-    return 'CON_HANG';
+  private computeBusinessStatus(stock: number): 'CON_HANG' | 'HET_HANG' {
+    return stock > 0 ? 'CON_HANG' : 'HET_HANG';
+  }
+
+  private async buildCategoryInventoryRows(filters: {
+    categoryId?: string;
+    productConditionId?: string;
+    classificationId?: string;
+    materialId?: string;
+    colorId?: string;
+    sizeId?: string;
+    storageZoneId?: string;
+    positionId?: string;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+  }): Promise<CategoryInventoryRow[]> {
+    const categories = await this.prisma.category.findMany({
+      where: {
+        ...(filters.categoryId ? { id: filters.categoryId } : {}),
+        ...(filters.search ? { name: { contains: filters.search } } : {}),
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    const transactionWhere: Prisma.InventoryTransactionWhereInput = {
+      status: InventoryTransactionStatus.ACTIVE,
+      ...(filters.productConditionId ? { productConditionId: filters.productConditionId } : {}),
+      ...(filters.storageZoneId ? { storageZoneId: filters.storageZoneId } : {}),
+      ...(filters.positionId ? { warehousePositionId: filters.positionId } : {}),
+      ...((filters.startDate || filters.endDate)
+        ? {
+            createdAt: {
+              ...(filters.startDate ? { gte: new Date(filters.startDate) } : {}),
+              ...(filters.endDate ? { lte: new Date(filters.endDate) } : {}),
+            },
+          }
+        : {}),
+      ...((filters.classificationId || filters.materialId || filters.colorId || filters.sizeId)
+        ? {
+            skuCombo: {
+              ...(filters.classificationId ? { classificationId: filters.classificationId } : {}),
+              ...(filters.materialId ? { materialId: filters.materialId } : {}),
+              ...(filters.colorId ? { colorId: filters.colorId } : {}),
+              ...(filters.sizeId ? { sizeId: filters.sizeId } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: transactionWhere,
+      include: {
+        category: true,
+        warehousePosition: { select: { label: true } },
+        productCondition: true,
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const map = new Map<string, CategoryInventoryRow>();
+    for (const category of categories) {
+      map.set(category.id, {
+        id: category.id,
+        name: category.name,
+        stock: 0,
+        latestProductConditionName: null,
+        latestSkuCombo: null,
+        latestActualStockDate: null,
+        latestCreatedAt: null,
+        latestSalePrice: null,
+        latestPurchasePrice: null,
+        positionLabels: [],
+      });
+    }
+
+    for (const transaction of transactions) {
+      if (!transaction.categoryId || !transaction.category) continue;
+      const current =
+        map.get(transaction.categoryId) ??
+        {
+          id: transaction.categoryId,
+          name: transaction.category.name,
+          stock: 0,
+          latestProductConditionName: null,
+          latestSkuCombo: null,
+          latestActualStockDate: null,
+          latestCreatedAt: null,
+          latestSalePrice: null,
+          latestPurchasePrice: null,
+          positionLabels: [],
+        };
+
+      current.stock += transaction.type === TransactionType.STOCK_IN ? transaction.quantity : -transaction.quantity;
+
+      if (!current.latestCreatedAt || transaction.createdAt > current.latestCreatedAt) {
+        current.latestCreatedAt = transaction.createdAt;
+        current.latestActualStockDate = transaction.actualStockDate?.toISOString() ?? null;
+        current.latestSalePrice = this.asNumber(transaction.salePrice);
+        current.latestPurchasePrice = this.asNumber(transaction.purchasePrice);
+        current.latestProductConditionName = transaction.productCondition?.name ?? null;
+        current.latestSkuCombo = transaction.skuCombo ?? null;
+      }
+
+      if (transaction.warehousePosition?.label && !current.positionLabels.includes(transaction.warehousePosition.label)) {
+        current.positionLabels.push(transaction.warehousePosition.label);
+      }
+
+      map.set(current.id, current);
+    }
+
+    return Array.from(map.values());
   }
 
   async stockIn(
-    productId: string,
+    categoryId: string,
     quantity: number,
     userId: string,
-    options?: {
-      purchasePrice?: number;
-      salePrice?: number;
-      skuComboId?: string;
-      productConditionId?: string;
-      storageZoneId?: string;
-      warehousePositionId?: string;
-      preliminaryCheckId?: string;
-      actualStockDate?: string;
-      notes?: string;
-    },
+    options?: StockInOptions,
   ): Promise<InventoryTransaction> {
     if (quantity <= 0) {
       throw new BadRequestException('Số lượng nhập kho phải lớn hơn 0');
     }
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
-
-    if (!product) {
-      throw new NotFoundException('Sản phẩm không tồn tại');
-    }
+    const normalizedCategoryId = categoryId.trim();
+    await this.ensureCategoryExists(normalizedCategoryId);
 
     const storageZoneId = options?.storageZoneId;
+    const warehousePositionId = options?.warehousePositionId;
 
-    // Check storage zone capacity if provided
     if (storageZoneId) {
       const zone = await this.prisma.storageZone.findUnique({
         where: { id: storageZoneId },
@@ -254,65 +429,14 @@ export class InventoryService {
       }
 
       const remaining = zone.maxCapacity - zone.currentStock;
-
       if (remaining <= 0) {
-        throw new BadRequestException(
-          'Khu vực này đã đầy, không thể nhập thêm hàng',
-        );
+        throw new BadRequestException('Khu vực này đã đầy, không thể nhập thêm hàng');
       }
-
       if (quantity > remaining) {
-        throw new BadRequestException(
-          `Chỉ được nhập tối đa ${remaining}`,
-        );
+        throw new BadRequestException(`Chỉ được nhập tối đa ${remaining}`);
       }
     }
 
-    // Determine actualStockDate
-    const actualStockDate = options?.actualStockDate
-      ? new Date(options.actualStockDate)
-      : new Date();
-    const purchasePrice = options?.purchasePrice ?? 0;
-    const salePrice = options?.salePrice ?? this.asNumber(product.price) ?? 0;
-
-    if (purchasePrice <= 0) {
-      throw new BadRequestException('Gia nhap bat buoc va phai lon hon 0');
-    }
-
-    if (salePrice <= 0) {
-      throw new BadRequestException('Gia ban bat buoc va phai lon hon 0');
-    }
-
-    const transactionOps = [
-      this.prisma.product.update({
-        where: { id: productId },
-        data: {
-          stock: { increment: quantity },
-          price: this.toPrismaDecimal(salePrice),
-        },
-      }),
-      this.prisma.inventoryTransaction.create({
-        data: {
-          productId,
-          type: TransactionType.STOCK_IN,
-          quantity,
-          purchasePrice: this.toPrismaDecimal(purchasePrice),
-          salePrice: this.toPrismaDecimal(salePrice),
-          status: InventoryTransactionStatus.ACTIVE,
-          userId,
-          skuComboId: options?.skuComboId,
-          productConditionId: options?.productConditionId,
-          storageZoneId,
-          warehousePositionId: options?.warehousePositionId,
-          preliminaryCheckId: options?.preliminaryCheckId,
-          actualStockDate,
-          notes: options?.notes,
-        },
-      }),
-    ];
-
-    // Check warehouse position capacity if provided
-    const warehousePositionId = options?.warehousePositionId;
     if (warehousePositionId) {
       const position = await this.prisma.warehousePosition.findUnique({
         where: { id: warehousePositionId },
@@ -324,21 +448,49 @@ export class InventoryService {
 
       if (position.maxCapacity !== null) {
         const remaining = position.maxCapacity - position.currentStock;
-
         if (remaining <= 0) {
-          throw new BadRequestException(
-            'Vị trí này đã đầy, không thể nhập thêm hàng',
-          );
+          throw new BadRequestException('Vị trí này đã đầy, không thể nhập thêm hàng');
         }
-
         if (quantity > remaining) {
-          throw new BadRequestException(
-            `Chỉ cho phép nhập tối đa ${remaining}`,
-          );
+          throw new BadRequestException(`Chỉ cho phép nhập tối đa ${remaining}`);
         }
       }
+    }
 
-      transactionOps.push(
+    const purchasePrice = options?.purchasePrice ?? 0;
+    const salePrice = options?.salePrice ?? purchasePrice;
+
+    if (purchasePrice <= 0) {
+      throw new BadRequestException('Giá nhập bắt buộc và phải lớn hơn 0');
+    }
+
+    const actualStockDate = options?.actualStockDate
+      ? new Date(options.actualStockDate)
+      : new Date();
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.inventoryTransaction.create({
+        data: {
+          categoryId: normalizedCategoryId,
+          type: TransactionType.STOCK_IN,
+          quantity,
+          purchasePrice: this.toPrismaDecimal(purchasePrice),
+          salePrice: this.toPrismaDecimal(salePrice),
+          status: InventoryTransactionStatus.ACTIVE,
+          userId,
+          skuComboId: options?.skuComboId,
+          productConditionId: options?.productConditionId,
+          storageZoneId,
+          warehousePositionId,
+          preliminaryCheckId: options?.preliminaryCheckId,
+          actualStockDate,
+          notes: options?.notes,
+        },
+      }) as never,
+    ];
+
+    if (warehousePositionId) {
+      ops.push(
         this.prisma.warehousePosition.update({
           where: { id: warehousePositionId },
           data: { currentStock: { increment: quantity } },
@@ -347,7 +499,7 @@ export class InventoryService {
     }
 
     if (storageZoneId) {
-      transactionOps.push(
+      ops.push(
         this.prisma.storageZone.update({
           where: { id: storageZoneId },
           data: { currentStock: { increment: quantity } },
@@ -355,9 +507,8 @@ export class InventoryService {
       );
     }
 
-    // If linked to a preliminary check, mark it as COMPLETED
     if (options?.preliminaryCheckId) {
-      transactionOps.push(
+      ops.push(
         this.prisma.preliminaryCheck.update({
           where: { id: options.preliminaryCheckId },
           data: { status: 'COMPLETED' },
@@ -365,78 +516,44 @@ export class InventoryService {
       );
     }
 
-    const results = await this.prisma.$transaction(transactionOps);
-
-    return results[1] as InventoryTransaction;
+    const results = await this.prisma.$transaction(ops);
+    return results[0] as InventoryTransaction;
   }
 
   async stockInBatch(
-    items: Array<{
-      productId: string;
-      quantity: number;
-      purchasePrice: number;
-      salePrice: number;
-      productConditionId?: string;
-      storageZoneId?: string;
-      warehousePositionId?: string;
-      actualStockDate?: string;
-      notes?: string;
-    }>,
+    items: StockInBatchItemInput[],
     userId: string,
     options?: {
       preliminaryCheckId?: string;
     },
   ) {
     if (!items.length) {
-      throw new BadRequestException('Vui long them it nhat mot dong nhap kho');
+      throw new BadRequestException('Vui lòng thêm ít nhất một dòng nhập kho');
     }
 
     const preliminaryCheckId = options?.preliminaryCheckId;
 
     if (preliminaryCheckId) {
-      const preliminaryCheck = await (this.prisma.preliminaryCheck.findUnique({
+      const preliminaryCheck = await this.prisma.preliminaryCheck.findUnique({
         where: { id: preliminaryCheckId },
-      }) as Promise<any>);
+      });
 
       if (!preliminaryCheck) {
-        throw new NotFoundException('Phieu kiem so bo khong ton tai');
+        throw new NotFoundException('Phiếu kiểm sơ bộ không tồn tại');
       }
 
       const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
       if (totalQuantity !== preliminaryCheck.quantity) {
-        throw new BadRequestException(`Tong so luong chi tiet phai khop kiem so bo: ${preliminaryCheck.quantity}`);
-      }
-
-      if (preliminaryCheck.categoryId) {
-        const products = await this.prisma.product.findMany({
-          where: {
-            id: { in: items.map((item) => item.productId) },
-          },
-          select: {
-            id: true,
-            categoryId: true,
-          },
-        });
-
-        if (products.length !== items.length) {
-          throw new NotFoundException('Co san pham khong ton tai trong danh sach nhap kho');
-        }
-
-        const hasForeignCategory = products.some(
-          (product) => product.categoryId !== preliminaryCheck.categoryId,
-        );
-
-        if (hasForeignCategory) {
-          throw new BadRequestException('Tat ca san pham nhap kho phai thuoc cung danh muc voi phieu kiem so bo');
-        }
+        throw new BadRequestException(`Tổng số lượng chi tiết phải khớp kiểm sơ bộ: ${preliminaryCheck.quantity}`);
       }
     }
 
-    const createdTransactions: InventoryTransaction[] = [];
+    const transactions: InventoryTransaction[] = [];
     for (const item of items) {
-      const transaction = await this.stockIn(item.productId, item.quantity, userId, {
+      const transaction = await this.stockIn(item.categoryId, item.quantity, userId, {
         purchasePrice: item.purchasePrice,
         salePrice: item.salePrice,
+        skuComboId: (item as any).skuComboId,
         productConditionId: item.productConditionId,
         storageZoneId: item.storageZoneId,
         warehousePositionId: item.warehousePositionId,
@@ -444,19 +561,19 @@ export class InventoryService {
         actualStockDate: item.actualStockDate,
         notes: item.notes,
       });
-      createdTransactions.push(transaction);
+      transactions.push(transaction);
     }
 
     return {
       success: true,
-      importedRows: createdTransactions.length,
-      totalQuantity: createdTransactions.reduce((sum, item) => sum + item.quantity, 0),
-      transactions: createdTransactions,
+      importedRows: transactions.length,
+      totalQuantity: transactions.reduce((sum, item) => sum + item.quantity, 0),
+      transactions,
     };
   }
 
   async stockOut(
-    productId: string,
+    categoryId: string,
     quantity: number,
     userId: string,
     options?: {
@@ -473,23 +590,17 @@ export class InventoryService {
       throw new BadRequestException('Số lượng xuất kho phải lớn hơn 0');
     }
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
+    const normalizedCategoryId = categoryId.trim();
+    await this.ensureCategoryExists(normalizedCategoryId);
 
-    if (!product) {
-      throw new NotFoundException('Sản phẩm không tồn tại');
-    }
-
-    if (quantity > product.stock) {
-      throw new BadRequestException(
-        'Không thể xuất quá số lượng tồn kho hiện tại',
-      );
+    const currentStock = await this.getCurrentStockByCategory(normalizedCategoryId);
+    if (quantity > currentStock) {
+      throw new BadRequestException('Không thể xuất quá số lượng tồn kho hiện tại');
     }
 
     const purchasePrice =
-      options?.purchasePrice ?? (await this.getLatestActivePurchasePrice(productId));
-    const salePrice = options?.salePrice ?? this.asNumber(product.price) ?? 0;
+      options?.purchasePrice ?? (await this.getLatestActivePurchasePrice(normalizedCategoryId));
+    const salePrice = options?.salePrice ?? purchasePrice;
     const storageZoneId = options?.storageZoneId;
     const warehousePositionId = options?.warehousePositionId;
 
@@ -503,20 +614,14 @@ export class InventoryService {
       }
 
       if (quantity > position.currentStock) {
-        throw new BadRequestException(
-          'Không thể xuất quá số lượng hiện có tại vị trí kho đã chọn',
-        );
+        throw new BadRequestException('Không thể xuất quá số lượng hiện có tại vị trí kho đã chọn');
       }
     }
 
-    const transactionOps = [
-      this.prisma.product.update({
-        where: { id: productId },
-        data: { stock: { decrement: quantity } },
-      }),
+    const ops: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.inventoryTransaction.create({
         data: {
-          productId,
+          categoryId: normalizedCategoryId,
           type: TransactionType.STOCK_OUT,
           quantity,
           purchasePrice: this.toPrismaDecimal(purchasePrice),
@@ -529,11 +634,11 @@ export class InventoryService {
           warehousePositionId,
           notes: options?.notes,
         },
-      }),
+      }) as never,
     ];
 
     if (storageZoneId) {
-      transactionOps.push(
+      ops.push(
         this.prisma.storageZone.update({
           where: { id: storageZoneId },
           data: { currentStock: { decrement: quantity } },
@@ -542,7 +647,7 @@ export class InventoryService {
     }
 
     if (warehousePositionId) {
-      transactionOps.push(
+      ops.push(
         this.prisma.warehousePosition.update({
           where: { id: warehousePositionId },
           data: { currentStock: { decrement: quantity } },
@@ -550,13 +655,12 @@ export class InventoryService {
       );
     }
 
-    const results = await this.prisma.$transaction(transactionOps);
-
-    return results[1] as InventoryTransaction;
+    const results = await this.prisma.$transaction(ops);
+    return results[0] as InventoryTransaction;
   }
 
   async adjustStock(
-    productId: string,
+    categoryId: string,
     quantity: number,
     type: 'INCREASE' | 'DECREASE',
     userId: string,
@@ -565,26 +669,24 @@ export class InventoryService {
       reason?: string;
     },
   ): Promise<InventoryTransaction> {
+    const normalizedCategoryId = categoryId.trim();
     const adjustmentNote = options?.reason
       ? `[ADJUSTMENT] ${options.reason}`
       : '[ADJUSTMENT]';
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-      select: { price: true },
-    });
+    const latestPrice = await this.getLatestActivePurchasePrice(normalizedCategoryId);
 
     if (type === 'INCREASE') {
-      return this.stockIn(productId, quantity, userId, {
-        purchasePrice: await this.getLatestActivePurchasePrice(productId),
-        salePrice: this.asNumber(product?.price) ?? 0,
+      return this.stockIn(normalizedCategoryId, quantity, userId, {
+        purchasePrice: latestPrice,
+        salePrice: latestPrice,
         warehousePositionId: options?.warehousePositionId,
         notes: adjustmentNote,
       });
     }
 
-    return this.stockOut(productId, quantity, userId, {
-      purchasePrice: await this.getLatestActivePurchasePrice(productId),
-      salePrice: this.asNumber(product?.price) ?? 0,
+    return this.stockOut(normalizedCategoryId, quantity, userId, {
+      purchasePrice: latestPrice,
+      salePrice: latestPrice,
       warehousePositionId: options?.warehousePositionId,
       notes: adjustmentNote,
     });
@@ -599,7 +701,7 @@ export class InventoryService {
     });
 
     if (transactions.length !== transactionIds.length) {
-      throw new NotFoundException('Khong tim thay mot hoac nhieu giao dich');
+      throw new NotFoundException('Không tìm thấy một hoặc nhiều giao dịch');
     }
 
     for (const transaction of transactions) {
@@ -620,13 +722,129 @@ export class InventoryService {
     return { updated: transactions.length, status };
   }
 
+  async updateTransaction(
+    id: string,
+    data: Record<string, unknown>,
+    userId: string,
+    userRole?: string,
+  ) {
+    const transaction = await this.prisma.inventoryTransaction.findUnique({
+      where: { id },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException('Giao dịch không tồn tại');
+    }
+
+    // Validate quantity
+    if (data.quantity !== undefined) {
+      const qty = Number(data.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new BadRequestException('Số lượng phải lớn hơn 0');
+      }
+
+      // For stock-out: check if new quantity exceeds available stock
+      if (transaction.type === TransactionType.STOCK_OUT) {
+        const currentCategoryStock = await this.getCurrentStockByCategory(transaction.categoryId!);
+        const stockAfterRevert = currentCategoryStock + transaction.quantity; // revert old qty
+        if (qty > stockAfterRevert) {
+          throw new BadRequestException(
+            `Không thể sửa số lượng xuất thành ${qty}. Tồn kho hiện tại chỉ có ${stockAfterRevert} sau khi hoàn lại giao dịch cũ.`,
+          );
+        }
+      }
+    }
+
+    // Validate price
+    if (data.purchasePrice !== undefined) {
+      const price = Number(data.purchasePrice);
+      if (!Number.isFinite(price) || price < 0) {
+        throw new BadRequestException('Giá nhập không hợp lệ');
+      }
+    }
+
+    const updateData: Record<string, unknown> = {};
+
+    if (data.quantity !== undefined) updateData.quantity = Number(data.quantity);
+    if (data.purchasePrice !== undefined) {
+      updateData.purchasePrice = this.toPrismaDecimal(Number(data.purchasePrice));
+      updateData.salePrice = this.toPrismaDecimal(Number(data.purchasePrice));
+    }
+    if (data.notes !== undefined) updateData.notes = data.notes || null;
+    if (data.categoryId !== undefined) updateData.categoryId = data.categoryId;
+    if (data.productConditionId !== undefined) updateData.productConditionId = data.productConditionId || null;
+    if (data.storageZoneId !== undefined) updateData.storageZoneId = data.storageZoneId || null;
+    if (data.warehousePositionId !== undefined) updateData.warehousePositionId = data.warehousePositionId || null;
+    if (data.actualStockDate !== undefined) updateData.actualStockDate = data.actualStockDate ? new Date(data.actualStockDate as string) : null;
+
+    if (Object.keys(updateData).length === 0) {
+      throw new BadRequestException('Không có thông tin nào được thay đổi');
+    }
+
+    // Handle quantity change — adjust stock counts
+    if (updateData.quantity !== undefined && Number(updateData.quantity) !== transaction.quantity) {
+      const diff = Number(updateData.quantity) - transaction.quantity;
+      const stockDiff = transaction.type === TransactionType.STOCK_IN ? diff : -diff;
+
+      if (transaction.warehousePositionId) {
+        const position = await this.prisma.warehousePosition.findUnique({
+          where: { id: transaction.warehousePositionId },
+        });
+        if (position) {
+          const newStock = position.currentStock + stockDiff;
+          if (newStock < 0) {
+            throw new BadRequestException(
+              `Không thể sửa: vị trí ${position.label || position.id} sẽ có tồn kho âm (${newStock})`,
+            );
+          }
+          await this.prisma.warehousePosition.update({
+            where: { id: transaction.warehousePositionId },
+            data: { currentStock: { increment: stockDiff } },
+          });
+        }
+      }
+      if (transaction.storageZoneId) {
+        const zone = await this.prisma.storageZone.findUnique({
+          where: { id: transaction.storageZoneId },
+        });
+        if (zone) {
+          const newStock = zone.currentStock + stockDiff;
+          if (newStock < 0) {
+            throw new BadRequestException(
+              `Không thể sửa: khu vực ${zone.name} sẽ có tồn kho âm (${newStock})`,
+            );
+          }
+          await this.prisma.storageZone.update({
+            where: { id: transaction.storageZoneId },
+            data: { currentStock: { increment: stockDiff } },
+          });
+        }
+      }
+    }
+
+    const updated = await this.prisma.inventoryTransaction.update({
+      where: { id },
+      data: updateData,
+      include: {
+        category: true,
+        skuCombo: { include: { classification: true, color: true, size: true, material: true } },
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Cập nhật giao dịch thành công',
+      data: updated,
+    };
+  }
+
   async deleteTransactions(transactionIds: string[]) {
     const transactions = await this.prisma.inventoryTransaction.findMany({
       where: { id: { in: transactionIds } },
     });
 
     if (transactions.length !== transactionIds.length) {
-      throw new NotFoundException('Khong tim thay mot hoac nhieu giao dich');
+      throw new NotFoundException('Không tìm thấy một hoặc nhiều giao dịch');
     }
 
     for (const transaction of transactions) {
@@ -655,15 +873,22 @@ export class InventoryService {
 
     const transactions = await this.prisma.inventoryTransaction.findMany({
       include: {
-        product: true,
-        user: {
-          select: {
-            name: true,
-          },
-        },
+        category: true,
         warehousePosition: {
           select: {
             label: true,
+            layout: { select: { name: true } },
+          },
+        },
+        storageZone: {
+          select: { name: true },
+        },
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
           },
         },
       },
@@ -671,6 +896,9 @@ export class InventoryService {
         createdAt: 'desc',
       },
     });
+    const userNameMap = await this.buildUserNameMap(
+      transactions.map((transaction) => transaction.userId),
+    );
 
     const mapped = transactions.map((transaction) => {
       const isAdjustment = transaction.notes?.startsWith('[ADJUSTMENT]') ?? false;
@@ -685,7 +913,7 @@ export class InventoryService {
 
       return {
         id: transaction.id,
-        productId: transaction.productId,
+        categoryId: transaction.categoryId,
         createdAt: transaction.createdAt.toISOString(),
         actualStockDate: transaction.actualStockDate?.toISOString() ?? null,
         kind,
@@ -698,10 +926,21 @@ export class InventoryService {
             : -transaction.quantity,
         purchasePrice: this.asNumber(transaction.purchasePrice),
         salePrice: this.asNumber(transaction.salePrice),
-        productName: transaction.product.name,
-        productSku: transaction.product.sku,
+        categoryName: transaction.category?.name ?? 'Danh mục',
         positionLabel: transaction.warehousePosition?.label ?? null,
-        userName: transaction.user.name,
+        warehouseTypeName: transaction.warehousePosition?.layout?.name ?? null,
+        storageZoneName: transaction.storageZone?.name ?? null,
+        productName: transaction.skuCombo
+          ? [
+              transaction.skuCombo.classification?.name,
+              transaction.skuCombo.color?.name,
+              transaction.skuCombo.size?.name,
+              transaction.skuCombo.material?.name,
+            ].filter(Boolean).join(' - ')
+          : null,
+        sku: transaction.skuCombo?.compositeSku ?? null,
+        userName:
+          userNameMap.get(transaction.userId) ?? 'NgÆ°á»i dÃ¹ng Ä‘Ã£ xÃ³a',
         note,
       } satisfies InventoryTransactionHistoryItem;
     });
@@ -726,65 +965,30 @@ export class InventoryService {
     filters: InventoryFilters,
   ): Promise<PaginatedResponse<unknown>> {
     const { categoryId, startDate, endDate, positionId } = filters;
-
-    // Require at least one filter condition
-    const hasFilter =
-      categoryId || startDate || endDate || positionId;
+    const hasFilter = categoryId || startDate || endDate || positionId;
 
     if (!hasFilter) {
-      throw new BadRequestException(
-        'Vui lòng chọn ít nhất một điều kiện lọc',
-      );
+      throw new BadRequestException('Vui lòng chọn ít nhất một điều kiện lọc');
     }
 
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 10;
     const skip = (page - 1) * limit;
 
-    // Build where clause
-    const where: Record<string, unknown> = {};
+    const rows = await this.buildCategoryInventoryRows({
+      categoryId,
+      startDate,
+      endDate,
+      positionId,
+    });
 
-    if (categoryId) {
-      where.categoryId = categoryId;
-    }
-
-    if (startDate || endDate) {
-      const createdAt: Record<string, Date> = {};
-      if (startDate) {
-        createdAt.gte = new Date(startDate);
-      }
-      if (endDate) {
-        createdAt.lte = new Date(endDate);
-      }
-      where.createdAt = createdAt;
-    }
-
-    if (positionId) {
-      where.warehousePositions = {
-        some: { id: positionId },
-      };
-    }
-
-    const [data, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          category: true,
-          warehousePositions: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.product.count({ where }),
-    ]);
-
+    const paged = rows.slice(skip, skip + limit);
     return {
-      data,
-      total,
+      data: paged,
+      total: rows.length,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(rows.length / limit) || 1,
     };
   }
 
@@ -792,11 +996,14 @@ export class InventoryService {
     const config = await this.prisma.warehouseConfig.findFirst();
     const maxCapacity = config?.maxCapacity ?? 1000;
 
-    const result = await this.prisma.product.aggregate({
-      _sum: { stock: true },
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: { status: InventoryTransactionStatus.ACTIVE },
+      select: { type: true, quantity: true },
     });
 
-    const currentTotal = result._sum.stock ?? 0;
+    const currentTotal = transactions.reduce((sum, transaction) => {
+      return sum + (transaction.type === TransactionType.STOCK_IN ? transaction.quantity : -transaction.quantity);
+    }, 0);
     const ratio = maxCapacity > 0 ? currentTotal / maxCapacity : 0;
 
     return {
@@ -805,18 +1012,6 @@ export class InventoryService {
       ratio,
       isWarning: ratio > 0.9,
     };
-  }
-
-  async getCurrentStock(productId: string): Promise<number> {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
-
-    if (!product) {
-      throw new NotFoundException('Sản phẩm không tồn tại');
-    }
-
-    return product.stock;
   }
 
   async getInventoryV2(filters: {
@@ -839,139 +1034,144 @@ export class InventoryService {
     const limit = filters.limit ?? 10;
     const skip = (page - 1) * limit;
 
-    const where: Record<string, unknown> = {};
+    let rows = await this.buildCategoryInventoryRows(filters);
+    const data = rows.map((row) => ({
+      categoryId: row.id,
+      categoryName: row.name,
+      stock: row.stock,
+      positionLabels: row.positionLabels,
+      latestProductConditionName: row.latestProductConditionName,
+      latestSkuCombo: row.latestSkuCombo,
+      latestActualStockDate: row.latestActualStockDate,
+      latestPurchasePrice: row.latestPurchasePrice,
+      latestSalePrice: row.latestSalePrice,
+      businessStatus: this.computeBusinessStatus(row.stock),
+    }));
 
-    if (filters.categoryId) {
-      where.categoryId = filters.categoryId;
-    }
-
-    if (filters.startDate || filters.endDate) {
-      const createdAt: Record<string, Date> = {};
-      if (filters.startDate) {
-        createdAt.gte = new Date(filters.startDate);
-      }
-      if (filters.endDate) {
-        createdAt.lte = new Date(filters.endDate);
-      }
-      where.createdAt = createdAt;
-    }
-
-    if (filters.search) {
-      where.OR = [
-        {
-          sku: { contains: filters.search },
-        },
-        {
-          name: { contains: filters.search },
-        },
-        {
-          warehousePositions: {
-            some: {
-              label: { contains: filters.search },
-            },
-          },
-        },
-      ];
-    }
-
-    const transactionSome: Record<string, unknown> = {};
-    if (filters.productConditionId) transactionSome.productConditionId = filters.productConditionId;
-    if (filters.storageZoneId) transactionSome.storageZoneId = filters.storageZoneId;
-    if (filters.classificationId || filters.materialId || filters.colorId || filters.sizeId) {
-      transactionSome.skuCombo = {
-        ...(filters.classificationId ? { classificationId: filters.classificationId } : {}),
-        ...(filters.materialId ? { materialId: filters.materialId } : {}),
-        ...(filters.colorId ? { colorId: filters.colorId } : {}),
-        ...(filters.sizeId ? { sizeId: filters.sizeId } : {}),
-      };
-    }
-    transactionSome.status = InventoryTransactionStatus.ACTIVE;
-    if (Object.keys(transactionSome).length > 0) {
-      where.transactions = { some: transactionSome };
-    }
-
-    if (filters.positionId) {
-      where.warehousePositions = {
-        some: {
-          id: filters.positionId,
-        },
-      };
-    }
-
-    const [allProducts, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          category: true,
-          warehousePositions: true,
-          transactions: {
-            take: 1,
-            where: { status: InventoryTransactionStatus.ACTIVE },
-            orderBy: { createdAt: 'desc' },
-            include: {
-              skuCombo: {
-                include: {
-                  classification: true,
-                  color: true,
-                  size: true,
-                  material: true,
-                },
-              },
-              productCondition: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.product.count({ where }),
-    ]);
-
-    const data = allProducts.map((product) => {
-      const latestTransaction = product.transactions[0];
-      const latestSkuCombo = latestTransaction?.skuCombo;
-      const attributes = latestSkuCombo
-        ? [
-            latestSkuCombo.classification?.name,
-            latestSkuCombo.material?.name,
-            latestSkuCombo.color?.name,
-            latestSkuCombo.size?.name,
-          ]
-            .filter(Boolean)
-            .join(' / ')
-        : '-';
-
-      return {
-        ...product,
-        attributes,
-        latestSkuCombo,
-        latestProductCondition: latestTransaction?.productCondition ?? null,
-        positionLabels:
-          product.warehousePositions
-            ?.map((position) => position.label)
-            .filter(Boolean) ?? [],
-        businessStatus: this.computeBusinessStatus({
-          stock: product.stock,
-          minThreshold: product.minThreshold,
-          isDiscontinued: product.isDiscontinued,
-        }),
-      };
-    });
-
-    // Filter by businessStatus if specified (post-query filter)
     const filtered = filters.businessStatus
-      ? data.filter((p) => p.businessStatus === filters.businessStatus)
+      ? data.filter((item) => item.businessStatus === filters.businessStatus)
       : data;
+    const paged = filtered.slice(skip, skip + limit);
 
     return {
-      data: filtered,
-      total: filters.businessStatus ? filtered.length : total,
+      data: paged,
+      total: filtered.length,
       page,
       limit,
-      totalPages: Math.ceil(
-        (filters.businessStatus ? filtered.length : total) / limit,
-      ),
+      totalPages: Math.ceil(filtered.length / limit) || 1,
+    };
+  }
+
+  /**
+   * Get inventory grouped by SKU combo (product-level).
+   * Each row = 1 unique product (SKU), not 1 category.
+   */
+  async getInventoryBySku(filters: {
+    search?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<PaginatedResponse<unknown>> {
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
+    const skip = (page - 1) * limit;
+
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: { status: InventoryTransactionStatus.ACTIVE },
+      include: {
+        category: true,
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
+          },
+        },
+        productCondition: true,
+        warehousePosition: { select: { label: true } },
+        storageZone: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Group by skuComboId (or categoryId if no skuCombo)
+    const map = new Map<string, {
+      key: string;
+      skuComboId: string | null;
+      categoryId: string | null;
+      categoryName: string;
+      productName: string;
+      sku: string;
+      stock: number;
+      productConditionName: string | null;
+      positionLabels: string[];
+      storageZoneNames: string[];
+      latestPurchasePrice: number | null;
+    }>();
+
+    for (const tx of transactions) {
+      const skuCombo = tx.skuCombo;
+      const key = skuCombo ? `sku:${skuCombo.id}` : `cat:${tx.categoryId || tx.id}`;
+
+      const productName = skuCombo
+        ? [skuCombo.classification?.name, skuCombo.color?.name, skuCombo.size?.name, skuCombo.material?.name].filter(Boolean).join(' - ')
+        : tx.category?.name || '-';
+
+      const sku = skuCombo?.compositeSku || '-';
+
+      const existing = map.get(key) ?? {
+        key,
+        skuComboId: skuCombo?.id || null,
+        categoryId: tx.categoryId,
+        categoryName: tx.category?.name || '-',
+        productName,
+        sku,
+        stock: 0,
+        productConditionName: null,
+        positionLabels: [],
+        storageZoneNames: [],
+        latestPurchasePrice: null,
+      };
+
+      existing.stock += tx.type === TransactionType.STOCK_IN ? tx.quantity : -tx.quantity;
+
+      if (!existing.productConditionName && tx.productCondition?.name) {
+        existing.productConditionName = tx.productCondition.name;
+      }
+      if (!existing.latestPurchasePrice && tx.purchasePrice) {
+        existing.latestPurchasePrice = this.asNumber(tx.purchasePrice);
+      }
+      if (tx.warehousePosition?.label && !existing.positionLabels.includes(tx.warehousePosition.label)) {
+        existing.positionLabels.push(tx.warehousePosition.label);
+      }
+      if (tx.storageZone?.name && !existing.storageZoneNames.includes(tx.storageZone.name)) {
+        existing.storageZoneNames.push(tx.storageZone.name);
+      }
+
+      map.set(key, existing);
+    }
+
+    let rows = Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
+
+    // Search filter
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      rows = rows.filter(
+        (r) =>
+          r.productName.toLowerCase().includes(q) ||
+          r.sku.toLowerCase().includes(q) ||
+          r.categoryName.toLowerCase().includes(q),
+      );
+    }
+
+    const paged = rows.slice(skip, skip + limit);
+
+    return {
+      data: paged,
+      total: rows.length,
+      page,
+      limit,
+      totalPages: Math.ceil(rows.length / limit) || 1,
     };
   }
 
@@ -986,143 +1186,48 @@ export class InventoryService {
     storageZoneId?: string;
     search?: string;
   }): Promise<Buffer> {
-    const where: Record<string, unknown> = {};
-
-    if (filters.categoryId) {
-      where.categoryId = filters.categoryId;
-    }
-
-    if (filters.search) {
-      where.OR = [
-        {
-          sku: { contains: filters.search },
-        },
-        {
-          name: { contains: filters.search },
-        },
-        {
-          warehousePositions: {
-            some: {
-              label: { contains: filters.search },
-            },
-          },
-        },
-      ];
-    }
-
-    const transactionSome: Record<string, unknown> = {};
-    if (filters.productConditionId) transactionSome.productConditionId = filters.productConditionId;
-    if (filters.storageZoneId) transactionSome.storageZoneId = filters.storageZoneId;
-    if (filters.classificationId || filters.materialId || filters.colorId || filters.sizeId) {
-      transactionSome.skuCombo = {
-        ...(filters.classificationId ? { classificationId: filters.classificationId } : {}),
-        ...(filters.materialId ? { materialId: filters.materialId } : {}),
-        ...(filters.colorId ? { colorId: filters.colorId } : {}),
-        ...(filters.sizeId ? { sizeId: filters.sizeId } : {}),
-      };
-    }
-    transactionSome.status = InventoryTransactionStatus.ACTIVE;
-    if (Object.keys(transactionSome).length > 0) {
-      where.transactions = { some: transactionSome };
-    }
-
-    const products = await this.prisma.product.findMany({
-      where,
-      include: {
-        category: true,
-        warehousePositions: true,
-        transactions: {
-          take: 1,
-          where: { status: InventoryTransactionStatus.ACTIVE },
-          orderBy: { createdAt: 'desc' },
-          include: {
-            skuCombo: {
-              include: {
-                classification: true,
-                color: true,
-                size: true,
-                material: true,
-              },
-            },
-            productCondition: true,
-          },
-        },
-      },
-      orderBy: { name: 'asc' },
+    const data = await this.getInventoryV2({
+      ...filters,
+      page: 1,
+      limit: 10000,
     });
 
-    let data = products.map((product) => {
-      const latestTransaction = product.transactions[0];
-      const latestSkuCombo = latestTransaction?.skuCombo;
-
-      return {
-        ...product,
-        attributes: latestSkuCombo
-          ? [
-              latestSkuCombo.classification?.name,
-              latestSkuCombo.material?.name,
-              latestSkuCombo.color?.name,
-              latestSkuCombo.size?.name,
-            ]
-              .filter(Boolean)
-              .join(' / ')
-          : '-',
-        positionLabels:
-          product.warehousePositions
-            ?.map((position) => position.label)
-            .filter(Boolean)
-            .join(', ') || '-',
-        productConditionName: latestTransaction?.productCondition?.name || '-',
-        businessStatus: this.computeBusinessStatus({
-          stock: product.stock,
-          minThreshold: product.minThreshold,
-          isDiscontinued: product.isDiscontinued,
-        }),
-      };
-    });
-
-    if (filters.businessStatus) {
-      data = data.filter((p) => p.businessStatus === filters.businessStatus);
-    }
-
-    if (data.length === 0) {
+    if (data.data.length === 0) {
       throw new NotFoundException('Không có dữ liệu để xuất báo cáo');
     }
 
     const ExcelJS = await import('exceljs');
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Tồn kho V2');
+    const worksheet = workbook.addWorksheet('Ton kho V2');
 
     const statusLabels: Record<string, string> = {
       CON_HANG: 'Còn hàng',
       HET_HANG: 'Hết hàng',
-      SAP_HET: 'Sắp hết hàng',
-      NGUNG_KD: 'Ngừng kinh doanh',
     };
 
     worksheet.columns = [
-      { header: 'Mã SKU', key: 'sku', width: 24 },
-      { header: 'Tên sản phẩm', key: 'name', width: 28 },
-      { header: 'Thuộc tính', key: 'attributes', width: 32 },
-      { header: 'Vị trí', key: 'positionLabels', width: 20 },
+      { header: 'Danh mục', key: 'categoryName', width: 28 },
       { header: 'Số lượng', key: 'stock', width: 14 },
+      { header: 'Vị trí', key: 'positionLabels', width: 24 },
+      { header: 'Tình trạng hàng', key: 'latestProductConditionName', width: 20 },
+      { header: 'Giá nhập gần nhất', key: 'latestPurchasePrice', width: 18 },
+      { header: 'Giá bán gần nhất', key: 'latestSalePrice', width: 18 },
       { header: 'Trạng thái', key: 'businessStatus', width: 18 },
-      { header: 'Tình trạng', key: 'productConditionName', width: 18 },
     ];
 
     const headerRow = worksheet.getRow(1);
     headerRow.font = { bold: true };
     headerRow.alignment = { horizontal: 'center' };
 
-    for (const product of data) {
+    for (const row of data.data as Array<Record<string, unknown>>) {
       worksheet.addRow({
-        sku: product.sku,
-        name: product.name,
-        attributes: product.attributes,
-        positionLabels: product.positionLabels,
-        stock: product.stock,
-        businessStatus: statusLabels[product.businessStatus] ?? product.businessStatus,
-        productConditionName: product.productConditionName,
+        categoryName: row.categoryName,
+        stock: row.stock,
+        positionLabels: Array.isArray(row.positionLabels) ? row.positionLabels.join(', ') : '-',
+        latestProductConditionName: row.latestProductConditionName ?? '-',
+        latestPurchasePrice: row.latestPurchasePrice ?? '-',
+        latestSalePrice: row.latestSalePrice ?? '-',
+        businessStatus: statusLabels[String(row.businessStatus)] ?? row.businessStatus,
       });
     }
 

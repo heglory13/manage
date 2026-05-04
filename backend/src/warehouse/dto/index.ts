@@ -1,6 +1,5 @@
 export { CreateLayoutDto } from './create-layout.dto.js';
 export { UpdateLayoutDto } from './update-layout.dto.js';
-export { AssignProductDto } from './assign-product.dto.js';
 export { MovePositionDto } from './move-position.dto.js';
 export { UpdateLabelDto } from './update-label.dto.js';
 export { UpdateCapacityDto } from './update-capacity.dto.js';

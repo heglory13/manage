@@ -30,8 +30,8 @@ describe('Warehouse PBT', () => {
           async ({ rowA, colA, rowB, colB, labelA, labelB }) => {
             fc.pre(rowA !== rowB || colA !== colB); // different positions
 
-            const posA = { id: 'a', layoutId: 'L1', row: rowA, column: colA, label: labelA, productId: null, isActive: true };
-            const posB = { id: 'b', layoutId: 'L1', row: rowB, column: colB, label: labelB, productId: null, isActive: true };
+            const posA = { id: 'a', layoutId: 'L1', row: rowA, column: colA, label: labelA, isActive: true };
+            const posB = { id: 'b', layoutId: 'L1', row: rowB, column: colB, label: labelB, isActive: true };
 
             let updatedA: Record<string, unknown> = {};
             let updatedB: Record<string, unknown> = {};
@@ -41,7 +41,7 @@ describe('Warehouse PBT', () => {
                 findUnique: jest.fn().mockResolvedValue(posA),
                 findFirst: jest.fn().mockResolvedValue(posB),
                 update: jest.fn().mockImplementation(({ where, data }: any) => {
-                  const result = { ...(where.id === 'a' ? posA : posB), ...data, product: null };
+                  const result = { ...(where.id === 'a' ? posA : posB), ...data };
                   if (where.id === 'a') updatedA = result;
                   else updatedB = result;
                   return Promise.resolve(result);

@@ -1,6 +1,6 @@
 import { IsIn, IsInt, IsOptional, Min } from 'class-validator';
 
-export class TopProductsQueryDto {
+export class TopCategoriesQueryDto {
   @IsOptional()
   @IsIn(['highest', 'lowest'])
   type?: 'highest' | 'lowest';

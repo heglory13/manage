@@ -37,20 +37,31 @@ export class PreliminaryCheckController {
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdatePreliminaryCheckDto) {
-    return this.preliminaryCheckService.update(id, dto);
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdatePreliminaryCheckDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    return this.preliminaryCheckService.update(id, dto, user.role);
   }
 
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    return this.preliminaryCheckService.remove(id);
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    return this.preliminaryCheckService.remove(id, user.role);
   }
 
   @Patch(':id/complete')
   async complete(
     @Param('id') id: string,
     @Body() dto: CompletePreliminaryCheckDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
   ) {
-    return this.preliminaryCheckService.complete(id, dto.status);
+    const user = currentUser as unknown as UserPayload;
+    return this.preliminaryCheckService.complete(id, dto.status, user.role);
   }
 }

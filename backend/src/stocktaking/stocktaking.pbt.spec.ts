@@ -12,13 +12,27 @@ function createMockPrisma(productsMap: Map<string, { id: string; stock: number }
   let recordIdCounter = 0;
 
   return {
+    category: {
+      findMany: jest.fn().mockImplementation((args?: { where?: { id?: { in: string[] } } }) => {
+        const ids =
+          args?.where?.id?.in ??
+          Array.from(productsMap.keys()).map((id) => `cat-${id}`);
+        return Promise.resolve(
+          ids.map((id) => ({
+            id,
+            code: id.toUpperCase(),
+            name: `Category ${id}`,
+          })),
+        );
+      }),
+    },
     product: {
       findMany: jest.fn().mockImplementation((args?: { where?: Record<string, unknown> }) => {
         if (!args?.where || Object.keys(args.where).length === 0) {
           return Promise.resolve(
             Array.from(productsMap.values()).map((p) => ({
               id: p.id, name: `P-${p.id}`, sku: `SKU-${p.id}`, stock: p.stock,
-              price: 100, categoryId: 'c1', createdAt: new Date(), updatedAt: new Date(),
+              price: 100, categoryId: `cat-${p.id}`, createdAt: new Date(), updatedAt: new Date(),
             })),
           );
         }
@@ -27,7 +41,7 @@ function createMockPrisma(productsMap: Map<string, { id: string; stock: number }
           ids.filter((id: string) => productsMap.has(id)).map((id: string) => {
             const p = productsMap.get(id)!;
             return { id: p.id, name: `P-${p.id}`, sku: `SKU-${p.id}`, stock: p.stock,
-              price: 100, categoryId: 'c1', createdAt: new Date(), updatedAt: new Date() };
+              price: 100, categoryId: `cat-${p.id}`, createdAt: new Date(), updatedAt: new Date() };
           }),
         );
       }),
@@ -38,7 +52,10 @@ function createMockPrisma(productsMap: Map<string, { id: string; stock: number }
         const rid = `r-${++recordIdCounter}`;
         const items = data.items.create.map((item: any, i: number) => ({
           id: `item-${rid}-${i}`, recordId: rid, ...item,
-          product: { id: item.productId, name: `P-${item.productId}` },
+          product: null,
+          category: item.categoryId
+            ? { id: item.categoryId, code: item.itemCode, name: item.itemLabel }
+            : null,
         }));
         return Promise.resolve({
           id: rid, status: data.status, mode: data.mode, cutoffTime: data.cutoffTime,
@@ -56,7 +73,23 @@ function createMockPrisma(productsMap: Map<string, { id: string; stock: number }
       create: jest.fn().mockResolvedValue({ id: 'h-1' }),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    inventoryTransaction: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 'txn-1' }),
+    },
+    preliminaryCheck: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+  };
+}
+
+function createMockInventoryService(productsMap: Map<string, { id: string; stock: number }>) {
+  return {
+    getCurrentStockByCategory: jest.fn().mockImplementation((categoryId: string) => {
+      const productId = categoryId.replace(/^cat-/, '');
+      return Promise.resolve(productsMap.get(productId)?.stock ?? 0);
+    }),
   };
 }
 
@@ -87,7 +120,10 @@ describe('Stocktaking PBT', () => {
 
             const productsMap = new Map(uniqueProducts.map((p) => [p.id, p]));
             const mockPrisma = createMockPrisma(productsMap);
-            const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+            const service = new StocktakingService(
+              mockPrisma as unknown as PrismaService,
+              createMockInventoryService(productsMap) as any,
+            );
 
             const result = await service.create('full', 'user-1');
 
@@ -118,7 +154,10 @@ describe('Stocktaking PBT', () => {
             const selectedIds = uniqueProducts.slice(0, Math.ceil(uniqueProducts.length / 2)).map((p) => p.id);
 
             const mockPrisma = createMockPrisma(productsMap);
-            const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+            const service = new StocktakingService(
+              mockPrisma as unknown as PrismaService,
+              createMockInventoryService(productsMap) as any,
+            );
 
             const result = await service.create('selected', 'user-1', selectedIds);
 
@@ -146,13 +185,17 @@ describe('Stocktaking PBT', () => {
 
             const productsMap = new Map([['p1', { id: 'p1', stock: systemQuantity }]]);
             const mockPrisma = createMockPrisma(productsMap);
+            const mockInventoryService = createMockInventoryService(productsMap);
 
             mockPrisma.stocktakingRecord.findUnique.mockResolvedValue({
               id: 'r-1', status: 'CHECKING',
-              items: [{ id: 'item-1', productId: 'p1', systemQuantity, actualQuantity: 0, discrepancy: 0, discrepancyReason: null, evidenceUrl: null }],
+              items: [{ id: 'item-1', categoryId: 'cat-p1', itemCode: 'CAT-P1', itemLabel: 'Category cat-p1', systemQuantity, actualQuantity: 0, discrepancy: 0, discrepancyReason: null, evidenceUrl: null }],
             });
 
-            const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+            const service = new StocktakingService(
+              mockPrisma as unknown as PrismaService,
+              mockInventoryService as any,
+            );
 
             // Submit without reason
             await expect(
@@ -178,7 +221,10 @@ describe('Stocktaking PBT', () => {
           async (userId) => {
             const productsMap = new Map([['p1', { id: 'p1', stock: 10 }]]);
             const mockPrisma = createMockPrisma(productsMap);
-            const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+            const service = new StocktakingService(
+              mockPrisma as unknown as PrismaService,
+              createMockInventoryService(productsMap) as any,
+            );
 
             await service.create('full', userId);
 
@@ -199,16 +245,21 @@ describe('Stocktaking PBT', () => {
           async (userId) => {
             const productsMap = new Map([['p1', { id: 'p1', stock: 10 }]]);
             const mockPrisma = createMockPrisma(productsMap);
+            const mockInventoryService = createMockInventoryService(productsMap);
 
             mockPrisma.stocktakingRecord.findUnique.mockResolvedValue({
               id: 'r-1', status: 'PENDING',
-              items: [{ id: 'i-1', productId: 'p1', systemQuantity: 10, actualQuantity: 10, discrepancy: 0 }],
+              createdBy: userId,
+              items: [{ id: 'i-1', categoryId: 'cat-p1', itemCode: 'CAT-P1', itemLabel: 'Category cat-p1', systemQuantity: 10, actualQuantity: 10, discrepancy: 0 }],
             });
             mockPrisma.stocktakingRecord.update.mockResolvedValue({
               id: 'r-1', status: 'APPROVED', items: [], creator: { id: userId, name: 'U', email: 'u@t.com', role: 'MANAGER' },
             });
 
-            const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+            const service = new StocktakingService(
+              mockPrisma as unknown as PrismaService,
+              mockInventoryService as any,
+            );
             await service.approve('r-1', userId);
 
             expect(mockPrisma.stocktakingStatusHistory.create).toHaveBeenCalledWith(

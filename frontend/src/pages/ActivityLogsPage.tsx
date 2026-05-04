@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import AppLayout from '../components/layout/AppLayout';
 import { api } from '../services/api';
 import { formatDateTime } from '../lib/utils';
@@ -9,6 +9,8 @@ import { Label } from '../components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Eye, ChevronDown, ChevronRight } from 'lucide-react';
+import SmartFilter, { type FilterField } from '../components/common/SmartFilter';
+import { useSavedFilters } from '../hooks/useSavedFilters';
 
 interface ActivityLog {
   id: string;
@@ -49,6 +51,62 @@ export default function ActivityLogsPage() {
   // Detail dialog
   const [selectedLog, setSelectedLog] = useState<ActivityLog | null>(null);
   const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+
+  const savedFilterHook = useSavedFilters({ pageKey: 'activity-logs' });
+
+  const filterFields = useMemo<FilterField[]>(() => [
+    {
+      key: 'tableName',
+      label: 'Loại bảng',
+      type: 'select',
+      options: [
+        { value: 'Product', label: 'Sản phẩm' },
+        { value: 'InventoryTransaction', label: 'Giao dịch kho' },
+        { value: 'User', label: 'Người dùng' },
+        { value: 'Category', label: 'Danh mục' },
+        { value: 'StorageZone', label: 'Khu vực lưu trữ' },
+        { value: 'StocktakingRecord', label: 'Kiểm kê' },
+        { value: 'WarehouseLayout', label: 'Sơ đồ kho' },
+      ],
+    },
+    {
+      key: 'action',
+      label: 'Hành động',
+      type: 'select',
+      options: [
+        { value: 'CREATE', label: 'Tạo mới' },
+        { value: 'UPDATE', label: 'Cập nhật' },
+        { value: 'DELETE', label: 'Xóa' },
+      ],
+    },
+    {
+      key: 'userName',
+      label: 'Người dùng',
+      type: 'text',
+      placeholder: 'Lọc người dùng...',
+    },
+    {
+      key: 'date',
+      label: 'Ngày',
+      type: 'date',
+    },
+  ], []);
+
+  const filteredLogs = useMemo(() => {
+    const f = savedFilterHook.filters;
+    if (Object.keys(f).length === 0) return logs;
+
+    return logs.filter((log) => {
+      if (f.tableName && log.tableName !== f.tableName) return false;
+      if (f.action && log.action !== f.action) return false;
+      if (f.userName && !log.userName?.toLowerCase().includes(String(f.userName).toLowerCase())) return false;
+      if (f.date) {
+        const logDate = new Date(log.createdAt).toISOString().slice(0, 10);
+        if (logDate !== f.date) return false;
+      }
+      return true;
+    });
+  }, [logs, savedFilterHook.filters]);
 
   const fetchLogs = useCallback(async (pageNum = 1) => {
     setIsLoading(true);
@@ -172,6 +230,19 @@ export default function ActivityLogsPage() {
         <p className="text-muted text-sm">Theo dõi tất cả thao tác thay đổi dữ liệu trong hệ thống</p>
       </div>
 
+      <SmartFilter
+        fields={filterFields}
+        filters={savedFilterHook.filters}
+        savedFilters={savedFilterHook.savedFilters}
+        activeFilterId={savedFilterHook.activeFilterId}
+        onUpdateFilter={savedFilterHook.updateFilter}
+        onRemoveFilter={savedFilterHook.removeFilter}
+        onClearFilters={savedFilterHook.clearFilters}
+        onApplyFilter={savedFilterHook.applyFilter}
+        onSaveFilter={savedFilterHook.saveFilter}
+        onDeleteFilter={savedFilterHook.deleteFilter}
+      />
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -276,7 +347,7 @@ export default function ActivityLogsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {logs.map((log, idx) => (
+                    {filteredLogs.map((log, idx) => (
                       <TableRow key={log.id}>
                         <TableCell>{(page - 1) * pageSize + idx + 1}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
@@ -299,7 +370,7 @@ export default function ActivityLogsPage() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {logs.length === 0 && (
+                    {filteredLogs.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           Không có nhật ký nào

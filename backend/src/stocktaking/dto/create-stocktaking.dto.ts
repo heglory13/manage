@@ -27,8 +27,8 @@ export class CreateStocktakingItemDto {
 
 export class CreateStocktakingDto {
   @IsString()
-  @IsIn(['full', 'selected', 'category', 'warehouseType'])
-  mode!: 'full' | 'selected' | 'category' | 'warehouseType';
+  @IsIn(['full', 'selected', 'category', 'warehouseType', 'product'])
+  mode!: 'full' | 'selected' | 'category' | 'warehouseType' | 'product';
 
   @IsOptional()
   @IsArray()
@@ -44,6 +44,11 @@ export class CreateStocktakingDto {
   @IsArray()
   @IsString({ each: true })
   warehouseTypeIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  skuComboIds?: string[];
 
   @IsOptional()
   @IsDateString()

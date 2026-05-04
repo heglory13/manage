@@ -24,6 +24,7 @@ import { ActivityLogInterceptor } from './activity-log/activity-log.interceptor.
 import { GeneralSettingsModule } from './general-settings/general-settings.module.js';
 import { BackupModule } from './backup/backup.module.js';
 import { OrderPlanModule } from './order-plan/order-plan.module.js';
+import { BarcodePrintModule } from './barcode-print/barcode-print.module.js';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { OrderPlanModule } from './order-plan/order-plan.module.js';
     GeneralSettingsModule,
     BackupModule,
     OrderPlanModule,
+    BarcodePrintModule,
   ],
   controllers: [AppController],
   providers: [

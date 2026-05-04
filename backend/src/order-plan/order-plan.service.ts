@@ -135,13 +135,13 @@ export class OrderPlanService {
     return item;
   }
 
-  async update(id: string, dto: Partial<OrderPlanPayload>) {
+  async update(id: string, dto: Partial<OrderPlanPayload>, userRole?: string) {
     const existing = await this.prisma.orderPlan.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Ke hoach dat hang khong ton tai');
     }
 
-    if (existing.status !== OrderPlanStatus.PLANNED) {
+    if (userRole !== 'ADMIN' && existing.status !== OrderPlanStatus.PLANNED) {
       throw new BadRequestException('Chi co the sua ke hoach khi chua xac nhan dat hang');
     }
 
@@ -179,13 +179,13 @@ export class OrderPlanService {
     });
   }
 
-  async confirmOrdered(id: string, expectedArrivalDate: string) {
+  async confirmOrdered(id: string, expectedArrivalDate: string, userRole?: string) {
     const existing = await this.prisma.orderPlan.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Ke hoach dat hang khong ton tai');
     }
 
-    if (existing.status !== OrderPlanStatus.PLANNED) {
+    if (userRole !== 'ADMIN' && existing.status !== OrderPlanStatus.PLANNED) {
       throw new BadRequestException('Ke hoach nay da duoc xac nhan dat hang truoc do');
     }
 
@@ -199,13 +199,13 @@ export class OrderPlanService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, userRole?: string) {
     const existing = await this.prisma.orderPlan.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Ke hoach dat hang khong ton tai');
     }
 
-    if (existing.status !== OrderPlanStatus.PLANNED) {
+    if (userRole !== 'ADMIN' && existing.status !== OrderPlanStatus.PLANNED) {
       throw new BadRequestException('Chi co the xoa ke hoach khi chua xac nhan dat hang');
     }
 

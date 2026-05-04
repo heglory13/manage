@@ -10,6 +10,9 @@ import { Label } from '../components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { compressImageForUpload } from '../lib/image';
 import { formatNumber } from '../lib/utils';
+import SmartFilter, { type FilterField } from '../components/common/SmartFilter';
+import { useSavedFilters } from '../hooks/useSavedFilters';
+import { SearchableSelect } from '../components/ui/searchable-select';
 
 type AttributeOption = {
   id: string;
@@ -72,6 +75,60 @@ export default function PreliminaryChecksPage() {
   const [form, setForm] = useState<PreliminaryCheckForm>(defaultPreliminaryForm);
 
   const isEditing = Boolean(editingRow);
+
+  const savedFilterHook = useSavedFilters({ pageKey: 'preliminary-checks' });
+
+  const filterFields = useMemo<FilterField[]>(() => [
+    {
+      key: 'status',
+      label: 'Trạng thái',
+      type: 'select',
+      options: [
+        { value: 'PENDING', label: 'Cho kiem tra chi tiet' },
+        { value: 'COMPLETED', label: 'Da kiem tra chi tiet' },
+      ],
+    },
+    {
+      key: 'category',
+      label: 'Danh mục SP',
+      type: 'select',
+      options: categories.map((c) => ({ value: c.id, label: c.name })),
+    },
+    {
+      key: 'quantity',
+      label: 'Số lượng',
+      type: 'text',
+      placeholder: 'Lọc số lượng...',
+    },
+    {
+      key: 'creator',
+      label: 'Người tạo',
+      type: 'text',
+      placeholder: 'Lọc người tạo...',
+    },
+    {
+      key: 'date',
+      label: 'Ngày tạo',
+      type: 'date',
+    },
+  ], [categories]);
+
+  const filteredRows = useMemo(() => {
+    const f = savedFilterHook.filters;
+    if (Object.keys(f).length === 0) return rows;
+
+    return rows.filter((item) => {
+      if (f.status && item.status !== f.status) return false;
+      if (f.category && item.category?.id !== f.category) return false;
+      if (f.quantity && !String(item.quantity).includes(String(f.quantity))) return false;
+      if (f.creator && !item.creator?.name?.toLowerCase().includes(String(f.creator).toLowerCase())) return false;
+      if (f.date) {
+        const itemDate = new Date(item.createdAt).toISOString().slice(0, 10);
+        if (itemDate !== f.date) return false;
+      }
+      return true;
+    });
+  }, [rows, savedFilterHook.filters]);
 
   const fetchMetadata = useCallback(async () => {
     const res = await api.get('/input-declarations/all');
@@ -235,13 +292,26 @@ export default function PreliminaryChecksPage() {
           </Button>
         </div>
 
+        <SmartFilter
+          fields={filterFields}
+          filters={savedFilterHook.filters}
+          savedFilters={savedFilterHook.savedFilters}
+          activeFilterId={savedFilterHook.activeFilterId}
+          onUpdateFilter={savedFilterHook.updateFilter}
+          onRemoveFilter={savedFilterHook.removeFilter}
+          onClearFilters={savedFilterHook.clearFilters}
+          onApplyFilter={savedFilterHook.applyFilter}
+          onSaveFilter={savedFilterHook.saveFilter}
+          onDeleteFilter={savedFilterHook.deleteFilter}
+        />
+
         <Card className="overflow-hidden rounded-[24px] border border-slate-200 shadow-sm">
           <CardContent className="p-0">
             {isLoading ? (
               <div className="flex h-64 items-center justify-center">
                 <div className="spinner" />
               </div>
-            ) : rows.length === 0 ? (
+            ) : filteredRows.length === 0 ? (
               <div className="py-14 text-center text-slate-500">Chua co phieu kiem so bo nao.</div>
             ) : (
               <>
@@ -260,7 +330,7 @@ export default function PreliminaryChecksPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {rows.map((item) => (
+                      {filteredRows.map((item) => (
                         <TableRow key={item.id} className="align-top">
                           <TableCell className="pl-4 text-[15px] text-slate-600">{formatDateTime(item.createdAt)}</TableCell>
                           <TableCell className="font-medium text-slate-900">{getRowCategoryLabel(item)}</TableCell>
@@ -280,7 +350,7 @@ export default function PreliminaryChecksPage() {
                               <span className="text-sm text-slate-400">Khong co</span>
                             )}
                           </TableCell>
-                          <TableCell className="max-w-[280px] text-[15px] text-slate-500">{item.note || '-'}</TableCell>
+                          <TableCell className="max-w-[280px] text-[15px] text-slate-500 whitespace-normal break-words">{item.note || '-'}</TableCell>
                           <TableCell className="pr-4">
                             <div className="flex justify-end gap-2">
                               {item.imageUrl && (
@@ -289,11 +359,11 @@ export default function PreliminaryChecksPage() {
                                   Xem
                                 </Button>
                               )}
-                              <Button variant="outline" size="sm" onClick={() => openEditModal(item)} disabled={item.status !== 'PENDING'}>
+                              <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
                                 <Pencil size={14} />
                                 Sua
                               </Button>
-                              <Button variant="outline" size="sm" onClick={() => handleDelete(item)} disabled={item.status !== 'PENDING'}>
+                              <Button variant="outline" size="sm" onClick={() => handleDelete(item)}>
                                 <Trash2 size={14} />
                                 Xoa
                               </Button>
@@ -306,7 +376,7 @@ export default function PreliminaryChecksPage() {
                 </div>
 
                 <div className="space-y-3 p-3 lg:hidden">
-                  {rows.map((item) => (
+                  {filteredRows.map((item) => (
                     <div key={item.id} className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm">
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -341,11 +411,11 @@ export default function PreliminaryChecksPage() {
                             Xem hinh
                           </Button>
                         )}
-                        <Button variant="outline" size="sm" onClick={() => openEditModal(item)} disabled={item.status !== 'PENDING'}>
+                        <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
                           <Pencil size={14} />
                           Sua
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => handleDelete(item)} disabled={item.status !== 'PENDING'}>
+                        <Button variant="outline" size="sm" onClick={() => handleDelete(item)}>
                           <Trash2 size={14} />
                           Xoa
                         </Button>
@@ -379,14 +449,12 @@ export default function PreliminaryChecksPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label>Danh muc san pham da nhan</Label>
-              <select className="form-select" value={form.categoryId} onChange={(e) => setForm((prev) => ({ ...prev, categoryId: e.target.value }))}>
-                <option value="">Chon danh muc</option>
-                {categories.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                options={categories.map((item) => ({ value: item.id, label: item.name }))}
+                value={form.categoryId}
+                onChange={(v) => setForm((prev) => ({ ...prev, categoryId: v }))}
+                placeholder="Chon danh muc"
+              />
             </div>
 
             <div className="space-y-2">
@@ -396,14 +464,12 @@ export default function PreliminaryChecksPage() {
 
             <div className="space-y-2">
               <Label>Loai kho chua</Label>
-              <select className="form-select" value={form.warehouseTypeId} onChange={(e) => setForm((prev) => ({ ...prev, warehouseTypeId: e.target.value }))}>
-                <option value="">Chon loai kho</option>
-                {warehouseTypes.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                options={warehouseTypes.map((item) => ({ value: item.id, label: item.name }))}
+                value={form.warehouseTypeId}
+                onChange={(v) => setForm((prev) => ({ ...prev, warehouseTypeId: v }))}
+                placeholder="Chon loai kho"
+              />
             </div>
 
             <div className="space-y-2 md:col-span-2">
@@ -430,7 +496,7 @@ export default function PreliminaryChecksPage() {
                 className="form-control min-h-[120px] py-3"
                 value={form.note}
                 onChange={(e) => setForm((prev) => ({ ...prev, note: e.target.value }))}
-                placeholder="Ghi chu them cac thong tin lien quan khac ve lo hang da nhan"
+                placeholder="Ghi chú thêm các thông tin liên quan khác về hàng hoá đã nhận (Ví dụ như Phí ship đã trả 30.000đ , Hàng khách hoàn trả mẫu kí gửi , Hàng khách kí gửi để in ấn ,...)"
               />
             </div>
           </div>

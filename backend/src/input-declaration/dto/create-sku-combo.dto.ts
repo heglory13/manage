@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateSkuComboDto {
   @IsString()
@@ -16,4 +16,8 @@ export class CreateSkuComboDto {
   @IsString()
   @IsNotEmpty()
   materialId!: string;
+
+  @IsOptional()
+  @IsString()
+  categoryId?: string;
 }

@@ -71,7 +71,6 @@ export class WarehouseService {
       where: { id: layout.id },
       include: {
         positions: {
-          include: { product: true },
           orderBy: [{ row: 'asc' }, { column: 'asc' }],
         },
       },
@@ -143,7 +142,6 @@ export class WarehouseService {
       where: { id: layout.id },
       include: {
         positions: {
-          include: { product: true },
           orderBy: [{ row: 'asc' }, { column: 'asc' }],
         },
       },
@@ -183,7 +181,6 @@ export class WarehouseService {
       },
       include: {
         positions: {
-          include: { product: true },
           orderBy: [{ row: 'asc' }, { column: 'asc' }],
         },
       },
@@ -196,7 +193,6 @@ export class WarehouseService {
     const layout = await this.prisma.warehouseLayout.findFirst({
       include: {
         positions: {
-          include: { product: true },
           orderBy: [{ row: 'asc' }, { column: 'asc' }],
         },
       },
@@ -204,36 +200,6 @@ export class WarehouseService {
     });
 
     return layout;
-  }
-
-  async assignProductToPosition(positionId: string, productId: string | null) {
-    // Validate position exists
-    const position = await this.prisma.warehousePosition.findUnique({
-      where: { id: positionId },
-    });
-
-    if (!position) {
-      throw new BadRequestException(
-        'Vị trí không hợp lệ trong sơ đồ kho',
-      );
-    }
-
-    // Validate product exists if assigning
-    if (productId) {
-      const product = await this.prisma.product.findUnique({
-        where: { id: productId },
-      });
-
-      if (!product) {
-        throw new NotFoundException('Sản phẩm không tồn tại');
-      }
-    }
-
-    return this.prisma.warehousePosition.update({
-      where: { id: positionId },
-      data: { productId: productId ?? null },
-      include: { product: true },
-    });
   }
 
   async validatePosition(positionId: string): Promise<boolean> {
@@ -267,12 +233,10 @@ export class WarehouseService {
         this.prisma.warehousePosition.update({
           where: { id: position.id },
           data: { row: targetRow, column: targetCol },
-          include: { product: true },
         }),
         this.prisma.warehousePosition.update({
           where: { id: targetPosition.id },
           data: { row: position.row, column: position.column },
-          include: { product: true },
         }),
       ]);
       return [updatedA, updatedB];
@@ -281,7 +245,6 @@ export class WarehouseService {
       const updated = await this.prisma.warehousePosition.update({
         where: { id },
         data: { row: targetRow, column: targetCol },
-        include: { product: true },
       });
       return [updated];
     }
@@ -320,7 +283,6 @@ export class WarehouseService {
         label,
         maxCapacity: matchedZone?.maxCapacity ?? position.maxCapacity,
       },
-      include: { product: true },
     });
   }
 
@@ -333,9 +295,9 @@ export class WarehouseService {
       throw new NotFoundException('Vị trí không tồn tại');
     }
 
-    // If deactivating, check if position has stock or product
+    // If deactivating, check if position still has active stock.
     if (position.isActive) {
-      if (position.currentStock > 0 || position.productId) {
+      if (position.currentStock > 0) {
         throw new BadRequestException(
           'Vị trí này đang chứa hàng hóa, vui lòng di chuyển hàng trước khi vô hiệu hóa',
         );
@@ -345,7 +307,6 @@ export class WarehouseService {
     return this.prisma.warehousePosition.update({
       where: { id },
       data: { isActive: !position.isActive },
-      include: { product: true },
     });
   }
 
@@ -365,7 +326,6 @@ export class WarehouseService {
     return this.prisma.warehousePosition.update({
       where: { id },
       data: { maxCapacity },
-      include: { product: true },
     });
   }
 
@@ -392,7 +352,6 @@ export class WarehouseService {
     return this.prisma.warehousePosition.update({
       where: { id },
       data: nextData,
-      include: { product: true },
     });
   }
 
@@ -437,7 +396,7 @@ export class WarehouseService {
       throw new NotFoundException('Vị trí không tồn tại');
     }
 
-    if (!force && (position.currentStock > 0 || position.productId)) {
+    if (!force && position.currentStock > 0) {
       throw new BadRequestException(
         'Vị trí đang chứa hàng hóa. Dùng force=true để xóa bất chấp.',
       );
@@ -457,7 +416,10 @@ export class WarehouseService {
     }
 
     const transactions = await this.prisma.inventoryTransaction.findMany({
-      where: { warehousePositionId: id },
+      where: {
+        warehousePositionId: id,
+        status: 'ACTIVE',
+      },
       include: {
         skuCombo: true,
       },
@@ -491,8 +453,10 @@ export class WarehouseService {
       include: {
         positions: {
           include: {
-            product: true,
             inventoryTransactions: {
+              where: {
+                status: 'ACTIVE',
+              },
               include: {
                 skuCombo: {
                   include: {

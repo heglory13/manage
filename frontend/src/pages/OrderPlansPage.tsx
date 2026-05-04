@@ -9,6 +9,9 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { formatNumber } from '../lib/utils';
+import SmartFilter, { type FilterField } from '../components/common/SmartFilter';
+import { useSavedFilters } from '../hooks/useSavedFilters';
+import { SearchableSelect } from '../components/ui/searchable-select';
 
 type AttributeOption = {
   id: string;
@@ -91,6 +94,63 @@ export default function OrderPlansPage() {
   const [expectedArrivalDate, setExpectedArrivalDate] = useState('');
 
   const isEditing = Boolean(editingRow);
+
+  const savedFilterHook = useSavedFilters({ pageKey: 'order-plans' });
+
+  const filterFields = useMemo<FilterField[]>(() => [
+    {
+      key: 'type',
+      label: 'Loại kế hoạch',
+      type: 'select',
+      options: [
+        { value: 'STOCK', label: 'Đặt hàng dự trữ lưu kho' },
+        { value: 'PREORDER', label: 'Đặt hàng cho khách Pre-order' },
+      ],
+    },
+    {
+      key: 'status',
+      label: 'Trạng thái',
+      type: 'select',
+      options: [
+        { value: 'PLANNED', label: 'Cho xac nhan dat hang' },
+        { value: 'ORDERED', label: 'Da xac nhan dat hang' },
+      ],
+    },
+    {
+      key: 'category',
+      label: 'Danh mục SP',
+      type: 'select',
+      options: categories.map((c) => ({ value: c.id, label: c.name })),
+    },
+    {
+      key: 'customerName',
+      label: 'Khách hàng',
+      type: 'text',
+      placeholder: 'Lọc khách hàng...',
+    },
+    {
+      key: 'date',
+      label: 'Ngày tạo',
+      type: 'date',
+    },
+  ], [categories]);
+
+  const filteredRows = useMemo(() => {
+    const f = savedFilterHook.filters;
+    if (Object.keys(f).length === 0) return rows;
+
+    return rows.filter((item) => {
+      if (f.type && item.type !== f.type) return false;
+      if (f.status && item.status !== f.status) return false;
+      if (f.category && item.category?.id !== f.category) return false;
+      if (f.customerName && !item.customerName?.toLowerCase().includes(String(f.customerName).toLowerCase())) return false;
+      if (f.date) {
+        const itemDate = new Date(item.createdAt).toISOString().slice(0, 10);
+        if (itemDate !== f.date) return false;
+      }
+      return true;
+    });
+  }, [rows, savedFilterHook.filters]);
 
   const fetchMetadata = useCallback(async () => {
     const res = await api.get('/input-declarations/all');
@@ -271,13 +331,26 @@ export default function OrderPlansPage() {
           </Button>
         </div>
 
+        <SmartFilter
+          fields={filterFields}
+          filters={savedFilterHook.filters}
+          savedFilters={savedFilterHook.savedFilters}
+          activeFilterId={savedFilterHook.activeFilterId}
+          onUpdateFilter={savedFilterHook.updateFilter}
+          onRemoveFilter={savedFilterHook.removeFilter}
+          onClearFilters={savedFilterHook.clearFilters}
+          onApplyFilter={savedFilterHook.applyFilter}
+          onSaveFilter={savedFilterHook.saveFilter}
+          onDeleteFilter={savedFilterHook.deleteFilter}
+        />
+
         <Card className="overflow-hidden rounded-[24px] border border-slate-200 shadow-sm">
           <CardContent className="p-0">
             {isLoading ? (
               <div className="flex h-64 items-center justify-center">
                 <div className="spinner" />
               </div>
-            ) : rows.length === 0 ? (
+            ) : filteredRows.length === 0 ? (
               <div className="py-14 text-center text-slate-500">Chua co ke hoach dat hang nao.</div>
             ) : (
               <Table className="border-none">
@@ -296,7 +369,7 @@ export default function OrderPlansPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((item) => (
+                  {filteredRows.map((item) => (
                     <TableRow key={item.id} className="align-top">
                       <TableCell className="pl-4 text-[15px] text-slate-600">{formatDateTime(item.createdAt)}</TableCell>
                       <TableCell className="font-medium text-slate-900">{typeLabel(item.type)}</TableCell>
@@ -328,11 +401,11 @@ export default function OrderPlansPage() {
                               Xac nhan da dat hang
                             </Button>
                           )}
-                          <Button variant="outline" size="sm" onClick={() => openEditModal(item)} disabled={item.status !== 'PLANNED'}>
+                          <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
                             <Pencil size={14} />
                             Sua
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(item)} disabled={item.status !== 'PLANNED'}>
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(item)}>
                             <Trash2 size={14} />
                             Xoa
                           </Button>
@@ -417,14 +490,12 @@ export default function OrderPlansPage() {
 
               <div className="space-y-2">
                 <Label>Danh muc san pham</Label>
-                <select className="form-select" value={form.categoryId} onChange={(e) => setForm((prev) => ({ ...prev, categoryId: e.target.value }))}>
-                  <option value="">Chon danh muc</option>
-                  {categories.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  options={categories.map((item) => ({ value: item.id, label: item.name }))}
+                  value={form.categoryId}
+                  onChange={(v) => setForm((prev) => ({ ...prev, categoryId: v }))}
+                  placeholder="Chon danh muc"
+                />
               </div>
 
               <div className="space-y-2">
@@ -434,14 +505,12 @@ export default function OrderPlansPage() {
 
               <div className="space-y-2">
                 <Label>Loai kho</Label>
-                <select className="form-select" value={form.warehouseTypeId} onChange={(e) => setForm((prev) => ({ ...prev, warehouseTypeId: e.target.value }))}>
-                  <option value="">Chon loai kho</option>
-                  {warehouseTypes.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  options={warehouseTypes.map((item) => ({ value: item.id, label: item.name }))}
+                  value={form.warehouseTypeId}
+                  onChange={(v) => setForm((prev) => ({ ...prev, warehouseTypeId: v }))}
+                  placeholder="Chon loai kho"
+                />
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">

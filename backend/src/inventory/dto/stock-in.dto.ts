@@ -1,9 +1,8 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class StockInDto {
   @IsString()
-  @IsNotEmpty()
-  productId!: string;
+  categoryId!: string;
 
   @IsNumber()
   @Min(1, { message: 'So luong nhap kho phai lon hon 0' })
@@ -13,9 +12,10 @@ export class StockInDto {
   @Min(1, { message: 'Gia nhap phai lon hon 0' })
   purchasePrice!: number;
 
+  @IsOptional()
   @IsNumber()
-  @Min(1, { message: 'Gia ban phai lon hon 0' })
-  salePrice!: number;
+  @Min(0)
+  salePrice?: number;
 
   @IsOptional()
   @IsString()

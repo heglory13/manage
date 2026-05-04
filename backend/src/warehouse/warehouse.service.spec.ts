@@ -19,6 +19,9 @@ describe('WarehouseService - V2 Methods', () => {
       inventoryTransaction: {
         findMany: jest.fn(),
       },
+      storageZone: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) =>
         Promise.all(ops),
       ),
@@ -110,7 +113,6 @@ describe('WarehouseService - V2 Methods', () => {
         id: 'pos-1',
         isActive: true,
         currentStock: 0,
-        productId: null,
       });
       mockPrisma.warehousePosition.update.mockResolvedValue({
         id: 'pos-1',
@@ -126,20 +128,6 @@ describe('WarehouseService - V2 Methods', () => {
         id: 'pos-1',
         isActive: true,
         currentStock: 5,
-        productId: null,
-      });
-
-      await expect(service.toggleActive('pos-1')).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-
-    it('should reject deactivation when position has product', async () => {
-      mockPrisma.warehousePosition.findUnique.mockResolvedValue({
-        id: 'pos-1',
-        isActive: true,
-        currentStock: 0,
-        productId: 'prod-1',
       });
 
       await expect(service.toggleActive('pos-1')).rejects.toThrow(
@@ -152,7 +140,6 @@ describe('WarehouseService - V2 Methods', () => {
         id: 'pos-1',
         isActive: false,
         currentStock: 0,
-        productId: null,
       });
       mockPrisma.warehousePosition.update.mockResolvedValue({
         id: 'pos-1',

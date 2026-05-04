@@ -3,8 +3,10 @@ import { Component, ReactNode } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
-import InventoryPage from './pages/InventoryPage';
 import TransactionsPage from './pages/TransactionsPage';
+import InventoryPage from './pages/InventoryPage';
+import BarcodePrintPage from './pages/BarcodePrintPage';
+import BarcodeMgmtPage from './pages/BarcodeMgmtPage';
 import WarehousePage from './pages/WarehousePage';
 import StocktakingPage from './pages/StocktakingPage';
 import PreliminaryChecksPage from './pages/PreliminaryChecksPage';
@@ -85,11 +87,13 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-            <Route path="/products" element={<Navigate to="/inventory" replace />} />
-            <Route path="/inventory" element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} />
+            <Route path="/products" element={<Navigate to="/transactions" replace />} />
             <Route path="/preliminary-checks" element={<ProtectedRoute><PreliminaryChecksPage /></ProtectedRoute>} />
             <Route path="/order-plans" element={<ProtectedRoute><OrderPlansPage /></ProtectedRoute>} />
             <Route path="/transactions" element={<ProtectedRoute><TransactionsPage /></ProtectedRoute>} />
+            <Route path="/inventory" element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} />
+            <Route path="/barcode-print" element={<ProtectedRoute><BarcodePrintPage /></ProtectedRoute>} />
+            <Route path="/barcode-management" element={<ProtectedRoute><BarcodeMgmtPage /></ProtectedRoute>} />
             <Route path="/warehouse" element={<ProtectedRoute><WarehousePage /></ProtectedRoute>} />
             <Route path="/stocktaking" element={<ProtectedRoute><StocktakingPage /></ProtectedRoute>} />
             <Route path="/input-declarations" element={<ProtectedRoute><InputDeclarationPage /></ProtectedRoute>} />

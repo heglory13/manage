@@ -3,7 +3,7 @@ import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-val
 export class StockAdjustDto {
   @IsString()
   @IsNotEmpty()
-  productId!: string;
+  categoryId!: string;
 
   @IsOptional()
   @IsString()

@@ -79,6 +79,25 @@ export class UserService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
+    const [transactionCount, stocktakingCount, preliminaryCheckCount, orderPlanCount] =
+      await this.prisma.$transaction([
+        this.prisma.inventoryTransaction.count({ where: { userId: id } }),
+        this.prisma.stocktakingRecord.count({ where: { createdBy: id } }),
+        this.prisma.preliminaryCheck.count({ where: { createdBy: id } }),
+        this.prisma.orderPlan.count({ where: { createdBy: id } }),
+      ]);
+
+    if (
+      transactionCount > 0 ||
+      stocktakingCount > 0 ||
+      preliminaryCheckCount > 0 ||
+      orderPlanCount > 0
+    ) {
+      throw new BadRequestException(
+        'KhÃ´ng thá»ƒ xÃ³a tÃ i khoáº£n nÃ y vÃ¬ cÃ²n dá»¯ liá»‡u nghiá»‡p vá»¥ liÃªn quan',
+      );
+    }
+
     await this.prisma.user.delete({ where: { id } });
   }
 

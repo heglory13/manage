@@ -45,6 +45,13 @@ enum OrderPlanStatus {
   ORDERED
 }
 
+enum BarcodePrintStatus {
+  PENDING    // Chờ duyệt
+  APPROVED   // Đã duyệt, cho phép in
+  PRINTED    // Đã in
+  REJECTED   // Từ chối
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -61,6 +68,7 @@ model User {
   preliminaryChecks  PreliminaryCheck[]
   orderPlans         OrderPlan[]
   savedFilters       SavedFilter[]
+  barcodePrintLogs   BarcodePrintLog[]
 
   @@map("users")
 }
@@ -69,9 +77,11 @@ model Category {
   id       String    @id @default(uuid())
   name     String    @unique
   code     String    @unique // Mã viết hoa không dấu (DONGHO, DIENTHOAI, ...)
-  products          Product[]
-  preliminaryChecks PreliminaryCheck[]
-  orderPlans        OrderPlan[]
+  products               Product[]
+  inventoryTransactions  InventoryTransaction[]
+  preliminaryChecks      PreliminaryCheck[]
+  stocktakingItems       StocktakingItem[]
+  orderPlans             OrderPlan[]
 
   @@map("categories")
 }
@@ -99,7 +109,8 @@ model Product {
 
 model InventoryTransaction {
   id                   String          @id @default(uuid())
-  productId            String
+  productId            String?
+  categoryId           String?
   type                 TransactionType
   quantity             Int
   purchasePrice        Decimal?        @db.Decimal(15, 2)
@@ -115,7 +126,8 @@ model InventoryTransaction {
   notes                String?
   createdAt            DateTime        @default(now())
 
-  product            Product            @relation(fields: [productId], references: [id])
+  product            Product?           @relation(fields: [productId], references: [id])
+  category           Category?          @relation(fields: [categoryId], references: [id])
   user               User               @relation(fields: [userId], references: [id])
   skuCombo           SkuCombo?          @relation(fields: [skuComboId], references: [id])
   productCondition   ProductCondition?  @relation(fields: [productConditionId], references: [id])
@@ -124,6 +136,7 @@ model InventoryTransaction {
   preliminaryCheck   PreliminaryCheck?  @relation(fields: [preliminaryCheckId], references: [id])
 
   @@index([productId, createdAt])
+  @@index([categoryId, createdAt])
   @@index([type, createdAt])
   @@index([status, createdAt])
   @@map("inventory_transactions")
@@ -195,7 +208,10 @@ model StocktakingRecord {
 model StocktakingItem {
   id                String  @id @default(uuid())
   recordId          String
-  productId         String
+  productId         String?
+  categoryId        String?
+  itemCode          String
+  itemLabel         String
   systemQuantity    Int     // Số lượng trên hệ thống
   actualQuantity    Int     // Số lượng thực tế
   discrepancy       Int     // = actualQuantity - systemQuantity
@@ -203,7 +219,11 @@ model StocktakingItem {
   discrepancyReason String? // Nguyên nhân chênh lệch
 
   record  StocktakingRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
-  product Product           @relation(fields: [productId], references: [id])
+  product Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  category Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([productId])
+  @@index([categoryId])
 
   @@map("stocktaking_items")
 }
@@ -339,6 +359,7 @@ model SkuCombo {
   size                 Size                  @relation(fields: [sizeId], references: [id])
   material             Material              @relation(fields: [materialId], references: [id])
   inventoryTransactions InventoryTransaction[]
+  barcodePrintLogs     BarcodePrintLog[]
 
   @@unique([classificationId, colorId, sizeId, materialId])
   @@map("sku_combos")
@@ -404,4 +425,33 @@ model ActivityLog {
   @@index([action])
   @@index([createdAt])
   @@map("activity_logs")
+}
+
+// === Phiếu in tem mã vạch ===
+
+model BarcodePrintLog {
+  id           String              @id @default(uuid())
+  userId       String
+  userName     String
+  skuComboId   String?
+  productName  String
+  sku          String
+  salePrice    Decimal             @db.Decimal(15, 2)
+  quantity     Int
+  status       BarcodePrintStatus  @default(PENDING)
+  paperSize    String?             // e.g. "74x22", "40x30"
+  approvedBy   String?
+  approvedAt   DateTime?
+  printedAt    DateTime?
+  rejectedAt   DateTime?
+  rejectReason String?
+  createdAt    DateTime            @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skuCombo SkuCombo? @relation(fields: [skuComboId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("barcode_print_logs")
 }

@@ -33,17 +33,31 @@ export class OrderPlanController {
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateOrderPlanDto) {
-    return this.orderPlanService.update(id, dto);
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderPlanDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    return this.orderPlanService.update(id, dto, user.role);
   }
 
   @Patch(':id/confirm-ordered')
-  async confirmOrdered(@Param('id') id: string, @Body() dto: ConfirmOrderPlanDto) {
-    return this.orderPlanService.confirmOrdered(id, dto.expectedArrivalDate);
+  async confirmOrdered(
+    @Param('id') id: string,
+    @Body() dto: ConfirmOrderPlanDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    return this.orderPlanService.confirmOrdered(id, dto.expectedArrivalDate, user.role);
   }
 
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    return this.orderPlanService.remove(id);
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    return this.orderPlanService.remove(id, user.role);
   }
 }

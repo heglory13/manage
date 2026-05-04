@@ -627,8 +627,50 @@ export class InputDeclarationService {
       storageZones.map((item) => [this.normalizeValue(item.name), item.maxCapacity]),
     );
 
+    // --- Phase 1: Validate each row individually ---
     const fileStorageZoneMap = new Map<string, number>();
     const errors: ImportError[] = [];
+    const errorRowNumbers = new Set<number>();
+    const validRows: ImportRow[] = [];
+    // Track storage zones to update (existing in DB but Excel has different capacity)
+    const updateStorageZones = new Map<string, { name: string; maxCapacity: number }>();
+
+    for (const row of rows) {
+      const rowErrors: ImportError[] = [];
+
+      if (row.storageZone && (row.storageZoneCapacity === null || row.storageZoneCapacity <= 0)) {
+        rowErrors.push({
+          row: row.rowNumber,
+          field: IMPORT_COLUMN_LABELS.storageZoneCapacity,
+          message: 'Suc chua khu vuc bat buoc va phai lon hon 0 khi co khu vuc hang hoa',
+        });
+      }
+
+      if (!row.storageZone && row.storageZoneCapacity !== null) {
+        rowErrors.push({
+          row: row.rowNumber,
+          field: IMPORT_COLUMN_LABELS.storageZone,
+          message: 'Khong duoc nhap suc chua khi thieu khu vuc hang hoa',
+        });
+      }
+
+      if (row.storageZone && row.storageZoneCapacity !== null && row.storageZoneCapacity > 0) {
+        const normalized = this.normalizeValue(row.storageZone);
+        const capacity = row.storageZoneCapacity;
+
+        // If same zone appears multiple times in file, last value wins (overwrite)
+        fileStorageZoneMap.set(normalized, capacity);
+      }
+
+      if (rowErrors.length > 0) {
+        errors.push(...rowErrors);
+        errorRowNumbers.add(row.rowNumber);
+      } else {
+        validRows.push(row);
+      }
+    }
+
+    // --- Phase 2: Collect new attributes from valid rows only ---
     const newCategories = new Map<string, { name: string; code: string }>();
     const newClassifications = new Map<string, string>();
     const newColors = new Map<string, string>();
@@ -638,90 +680,115 @@ export class InputDeclarationService {
     const newStorageZones = new Map<string, { name: string; maxCapacity: number }>();
     const newWarehouseTypes = new Map<string, string>();
 
-    for (const row of rows) {
-      if (row.storageZone && (row.storageZoneCapacity === null || row.storageZoneCapacity <= 0)) {
-        errors.push({
-          row: row.rowNumber,
-          field: IMPORT_COLUMN_LABELS.storageZoneCapacity,
-          message: 'Suc chua khu vuc bat buoc va phai lon hon 0 khi co khu vuc hang hoa',
-        });
-      }
+    // Track skipped (already existing) counts per type
+    const skippedCounts = {
+      categories: 0,
+      classifications: 0,
+      colors: 0,
+      sizes: 0,
+      materials: 0,
+      productConditions: 0,
+      storageZones: 0,
+      warehouseTypes: 0,
+    };
+    // Track unique skipped names to avoid double-counting
+    const skippedCategories = new Set<string>();
+    const skippedClassifications = new Set<string>();
+    const skippedColors = new Set<string>();
+    const skippedSizes = new Set<string>();
+    const skippedMaterials = new Set<string>();
+    const skippedProductConditions = new Set<string>();
+    const skippedWarehouseTypes = new Set<string>();
+    const skippedStorageZones = new Set<string>();
 
-      if (!row.storageZone && row.storageZoneCapacity !== null) {
-        errors.push({
-          row: row.rowNumber,
-          field: IMPORT_COLUMN_LABELS.storageZone,
-          message: 'Khong duoc nhap suc chua khi thieu khu vuc hang hoa',
-        });
-      }
-
+    for (const row of validRows) {
       if (row.category) {
         const normalized = this.normalizeValue(row.category);
         if (!categoryNames.has(normalized) && !newCategories.has(normalized)) {
           const code = this.generateCategoryCode(row.category, categoryCodes);
           newCategories.set(normalized, { name: row.category, code });
+        } else if (categoryNames.has(normalized) && !skippedCategories.has(normalized)) {
+          skippedCategories.add(normalized);
+          skippedCounts.categories++;
         }
       }
 
       if (row.classification) {
         const normalized = this.normalizeValue(row.classification);
-        if (!classificationNames.has(normalized)) {
+        if (!classificationNames.has(normalized) && !newClassifications.has(normalized)) {
           newClassifications.set(normalized, row.classification);
+        } else if (classificationNames.has(normalized) && !skippedClassifications.has(normalized)) {
+          skippedClassifications.add(normalized);
+          skippedCounts.classifications++;
         }
       }
 
       if (row.color) {
         const normalized = this.normalizeValue(row.color);
-        if (!colorNames.has(normalized)) {
+        if (!colorNames.has(normalized) && !newColors.has(normalized)) {
           newColors.set(normalized, row.color);
+        } else if (colorNames.has(normalized) && !skippedColors.has(normalized)) {
+          skippedColors.add(normalized);
+          skippedCounts.colors++;
         }
       }
 
       if (row.size) {
         const normalized = this.normalizeValue(row.size);
-        if (!sizeNames.has(normalized)) {
+        if (!sizeNames.has(normalized) && !newSizes.has(normalized)) {
           newSizes.set(normalized, row.size);
+        } else if (sizeNames.has(normalized) && !skippedSizes.has(normalized)) {
+          skippedSizes.add(normalized);
+          skippedCounts.sizes++;
         }
       }
 
       if (row.material) {
         const normalized = this.normalizeValue(row.material);
-        if (!materialNames.has(normalized)) {
+        if (!materialNames.has(normalized) && !newMaterials.has(normalized)) {
           newMaterials.set(normalized, row.material);
+        } else if (materialNames.has(normalized) && !skippedMaterials.has(normalized)) {
+          skippedMaterials.add(normalized);
+          skippedCounts.materials++;
         }
       }
 
       if (row.productCondition) {
         const normalized = this.normalizeValue(row.productCondition);
-        if (!productConditionNames.has(normalized)) {
+        if (!productConditionNames.has(normalized) && !newProductConditions.has(normalized)) {
           newProductConditions.set(normalized, row.productCondition);
+        } else if (productConditionNames.has(normalized) && !skippedProductConditions.has(normalized)) {
+          skippedProductConditions.add(normalized);
+          skippedCounts.productConditions++;
         }
       }
 
       if (row.storageZone) {
         const normalized = this.normalizeValue(row.storageZone);
-        const capacity = row.storageZoneCapacity ?? 0;
+        const capacity = fileStorageZoneMap.get(normalized) ?? row.storageZoneCapacity ?? 0;
         const existingCapacity = storageZoneMap.get(normalized);
-        const fileCapacity = fileStorageZoneMap.get(normalized);
 
-        if (
-          existingCapacity !== undefined &&
-          row.storageZoneCapacity !== null &&
-          existingCapacity !== capacity
-        ) {
-          errors.push({
-            row: row.rowNumber,
-            field: IMPORT_COLUMN_LABELS.storageZoneCapacity,
-            message: `Khu vuc "${row.storageZone}" da ton tai voi suc chua ${existingCapacity}`,
+        if (existingCapacity !== undefined) {
+          // Zone exists in DB — if capacity differs, mark for update
+          if (capacity !== existingCapacity) {
+            updateStorageZones.set(normalized, {
+              name: row.storageZone,
+              maxCapacity: capacity,
+            });
+          }
+          // Count as skipped (existing) — but may be updated
+          if (!skippedStorageZones.has(normalized)) {
+            skippedCounts.storageZones++;
+            skippedStorageZones.add(normalized);
+          }
+        } else if (!newStorageZones.has(normalized)) {
+          // Zone is new — create it
+          newStorageZones.set(normalized, {
+            name: row.storageZone,
+            maxCapacity: capacity,
           });
-        } else if (fileCapacity !== undefined && row.storageZoneCapacity !== null && fileCapacity !== capacity) {
-          errors.push({
-            row: row.rowNumber,
-            field: IMPORT_COLUMN_LABELS.storageZoneCapacity,
-            message: `Khu vuc "${row.storageZone}" bi trung voi suc chua khac nhau trong file`,
-          });
-        } else if (existingCapacity === undefined && row.storageZoneCapacity !== null) {
-          fileStorageZoneMap.set(normalized, capacity);
+        } else {
+          // Already queued for creation — update capacity if file had a later value
           newStorageZones.set(normalized, {
             name: row.storageZone,
             maxCapacity: capacity,
@@ -731,69 +798,72 @@ export class InputDeclarationService {
 
       if (row.warehouseType) {
         const normalized = this.normalizeValue(row.warehouseType);
-        if (!warehouseTypeNames.has(normalized)) {
+        if (!warehouseTypeNames.has(normalized) && !newWarehouseTypes.has(normalized)) {
           newWarehouseTypes.set(normalized, row.warehouseType);
+        } else if (warehouseTypeNames.has(normalized) && !skippedWarehouseTypes.has(normalized)) {
+          skippedWarehouseTypes.add(normalized);
+          skippedCounts.warehouseTypes++;
         }
       }
     }
 
-    if (errors.length > 0) {
-      return {
-        success: false,
-        totalRows: rows.length,
-        importedRows: 0,
-        createdCounts: {
-          categories: 0,
-          classifications: 0,
-          colors: 0,
-          sizes: 0,
-          materials: 0,
-          productConditions: 0,
-          storageZones: 0,
-          warehouseTypes: 0,
-        },
-        errors,
-      };
+    // --- Phase 3: Import valid rows (even if some rows had errors) ---
+    let updatedStorageZonesCount = 0;
+
+    if (validRows.length > 0) {
+      await this.prisma.$transaction(async (tx) => {
+        for (const item of newCategories.values()) {
+          await tx.category.create({ data: item });
+        }
+
+        for (const name of newClassifications.values()) {
+          await tx.classification.create({ data: { name } });
+        }
+
+        for (const name of newColors.values()) {
+          await tx.color.create({ data: { name } });
+        }
+
+        for (const name of newSizes.values()) {
+          await tx.size.create({ data: { name } });
+        }
+
+        for (const name of newMaterials.values()) {
+          await tx.material.create({ data: { name } });
+        }
+
+        for (const name of newProductConditions.values()) {
+          await tx.productCondition.create({ data: { name } });
+        }
+
+        for (const item of newStorageZones.values()) {
+          await tx.storageZone.create({ data: item });
+        }
+
+        // Update existing storage zones with new capacity from Excel
+        for (const item of updateStorageZones.values()) {
+          await tx.storageZone.update({
+            where: { name: item.name },
+            data: { maxCapacity: item.maxCapacity },
+          });
+          updatedStorageZonesCount++;
+        }
+
+        for (const name of newWarehouseTypes.values()) {
+          await tx.warehouseType.create({ data: { name } });
+        }
+      });
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const item of newCategories.values()) {
-        await tx.category.create({ data: item });
-      }
-
-      for (const name of newClassifications.values()) {
-        await tx.classification.create({ data: { name } });
-      }
-
-      for (const name of newColors.values()) {
-        await tx.color.create({ data: { name } });
-      }
-
-      for (const name of newSizes.values()) {
-        await tx.size.create({ data: { name } });
-      }
-
-      for (const name of newMaterials.values()) {
-        await tx.material.create({ data: { name } });
-      }
-
-      for (const name of newProductConditions.values()) {
-        await tx.productCondition.create({ data: { name } });
-      }
-
-      for (const item of newStorageZones.values()) {
-        await tx.storageZone.create({ data: item });
-      }
-
-      for (const name of newWarehouseTypes.values()) {
-        await tx.warehouseType.create({ data: { name } });
-      }
-    });
+    const hasErrors = errors.length > 0;
+    const hasImported = validRows.length > 0;
 
     return {
-      success: true,
+      success: !hasErrors,
+      partialSuccess: hasErrors && hasImported,
       totalRows: rows.length,
-      importedRows: rows.length,
+      importedRows: validRows.length,
+      errorRows: errors.length > 0 ? [...errorRowNumbers].sort((a, b) => a - b) : [],
       createdCounts: {
         categories: newCategories.size,
         classifications: newClassifications.size,
@@ -804,6 +874,11 @@ export class InputDeclarationService {
         storageZones: newStorageZones.size,
         warehouseTypes: newWarehouseTypes.size,
       },
+      updatedCounts: {
+        storageZones: updatedStorageZonesCount,
+      },
+      skippedCounts,
+      errors: hasErrors ? errors : undefined,
     };
   }
 

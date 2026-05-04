@@ -5,9 +5,8 @@ import {
 
 export interface TransactionValuationRow {
   id: string;
-  productId: string;
-  productName: string;
-  productSku: string;
+  categoryId: string;
+  categoryName: string;
   skuComboId: string | null;
   compositeSku: string | null;
   classification?: string | null;
@@ -23,10 +22,9 @@ export interface TransactionValuationRow {
 
 export interface InventoryValuationBucket {
   key: string;
-  productId: string;
-  productName: string;
-  productSku: string;
-  compositeSku: string;
+  categoryId: string;
+  categoryName: string;
+  compositeSku: string | null;
   classification: string;
   color: string;
   size: string;
@@ -61,14 +59,13 @@ export function buildInventoryValuationBuckets(
   const bucketMap = new Map<string, InventoryValuationBucket>();
 
   const ensureBucket = (row: TransactionValuationRow) => {
-    const key = row.skuComboId || `product:${row.productId}`;
+    const key = row.skuComboId || `category:${row.categoryId}`;
     if (!bucketMap.has(key)) {
       bucketMap.set(key, {
         key,
-        productId: row.productId,
-        productName: row.productName,
-        productSku: row.productSku,
-        compositeSku: row.compositeSku || row.productSku,
+        categoryId: row.categoryId,
+        categoryName: row.categoryName,
+        compositeSku: row.compositeSku,
         classification: row.classification || '-',
         color: row.color || '-',
         size: row.size || '-',

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import { ForbiddenException } from '@nestjs/common';
 import type { Response } from 'express';
 import { Role } from '@prisma/client/index';
@@ -29,7 +29,7 @@ export class InventoryController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.inventoryService.stockIn(dto.productId, dto.quantity, user.userId, {
+    return this.inventoryService.stockIn(dto.categoryId, dto.quantity, user.userId, {
       purchasePrice: dto.purchasePrice,
       salePrice: dto.salePrice,
       skuComboId: dto.skuComboId,
@@ -60,7 +60,7 @@ export class InventoryController {
   ) {
     const user = currentUser as unknown as UserPayload;
     return this.inventoryService.stockOut(
-      dto.productId,
+      dto.categoryId,
       dto.quantity,
       user.userId,
       {
@@ -79,7 +79,7 @@ export class InventoryController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.inventoryService.adjustStock(dto.productId, dto.quantity, dto.type, user.userId, {
+    return this.inventoryService.adjustStock(dto.categoryId, dto.quantity, dto.type, user.userId, {
       warehousePositionId: dto.warehousePositionId,
       reason: dto.reason,
     });
@@ -96,6 +96,16 @@ export class InventoryController {
       throw new ForbiddenException('Ban khong co quyen sua giao dich');
     }
     return this.inventoryService.updateTransactionStatus(dto.transactionIds, dto.status);
+  }
+
+  @Patch('transactions/:id')
+  async updateTransaction(
+    @Param('id') id: string,
+    @Body() dto: Record<string, unknown>,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    return this.inventoryService.updateTransaction(id, dto, user.userId, user.role);
   }
 
   @Delete('transactions')
@@ -145,6 +155,19 @@ export class InventoryController {
       search: query.search,
       page: query.page ? parseInt(query.page, 10) : undefined,
       limit: query.limit ? parseInt(query.limit, 10) : undefined,
+    });
+  }
+
+  @Get('by-sku')
+  async getInventoryBySku(
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.inventoryService.getInventoryBySku({
+      search,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
     });
   }
 

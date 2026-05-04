@@ -411,7 +411,7 @@ async function main() {
     { name: 'Xịt khử mùi giày', category: 'PK', minThreshold: 12, maxThreshold: 120, price: 180000 },
   ];
 
-  const products: { id: string; sku: string; stock: number }[] = [];
+  const products: { id: string; sku: string; stock: number; categoryId: string; categoryCode: string; categoryName: string }[] = [];
   for (let i = 0; i < productTemplates.length; i++) {
     const t = productTemplates[i];
     const sku = `${t.category}-${String(i + 1).padStart(4, '0')}`;
@@ -427,11 +427,27 @@ async function main() {
         minThreshold: t.minThreshold,
         maxThreshold: t.maxThreshold,
       });
-      products.push({ id: product.id, sku: product.sku, stock });
+      products.push({
+        id: product.id,
+        sku: product.sku,
+        stock,
+        categoryId: categories[t.category],
+        categoryCode: t.category,
+        categoryName: catData.find((category) => category.code === t.category)?.name || t.category,
+      });
     } catch {
       // product already exists
       const existing = await prisma.product.findFirst({ where: { sku } });
-      if (existing) products.push({ id: existing.id, sku: existing.sku, stock: existing.stock });
+      if (existing) {
+        products.push({
+          id: existing.id,
+          sku: existing.sku,
+          stock: existing.stock,
+          categoryId: existing.categoryId,
+          categoryCode: t.category,
+          categoryName: catData.find((category) => category.code === t.category)?.name || t.category,
+        });
+      }
     }
   }
   console.log(`✅ ${products.length} products created/loaded`);
@@ -465,6 +481,7 @@ async function main() {
       await prisma.inventoryTransaction.create({
         data: {
           productId: product.id,
+          categoryId: product.categoryId,
           type: isStockIn ? TransactionType.STOCK_IN : TransactionType.STOCK_OUT,
           quantity,
           purchasePrice,
@@ -540,6 +557,9 @@ async function main() {
       data: {
         recordId: record1.id,
         productId: p.id,
+        categoryId: p.categoryId,
+        itemCode: p.categoryCode,
+        itemLabel: p.categoryName,
         systemQuantity: sysQty,
         actualQuantity: Math.max(0, actualQty),
         discrepancy: Math.max(0, actualQty) - sysQty,
@@ -570,7 +590,16 @@ async function main() {
   });
   for (const p of products.slice(15, 25)) {
     await prisma.stocktakingItem.create({
-      data: { recordId: record2.id, productId: p.id, systemQuantity: p.stock || 10, actualQuantity: p.stock || 10, discrepancy: 0 },
+      data: {
+        recordId: record2.id,
+        productId: p.id,
+        categoryId: p.categoryId,
+        itemCode: p.categoryCode,
+        itemLabel: p.categoryName,
+        systemQuantity: p.stock || 10,
+        actualQuantity: p.stock || 10,
+        discrepancy: 0,
+      },
     });
   }
   await prisma.stocktakingStatusHistory.createMany({
@@ -593,7 +622,16 @@ async function main() {
   });
   for (const p of products.slice(25, 33)) {
     await prisma.stocktakingItem.create({
-      data: { recordId: record3.id, productId: p.id, systemQuantity: p.stock || 10, actualQuantity: 0, discrepancy: -(p.stock || 10) },
+      data: {
+        recordId: record3.id,
+        productId: p.id,
+        categoryId: p.categoryId,
+        itemCode: p.categoryCode,
+        itemLabel: p.categoryName,
+        systemQuantity: p.stock || 10,
+        actualQuantity: 0,
+        discrepancy: -(p.stock || 10),
+      },
     });
   }
 
@@ -665,7 +703,9 @@ async function main() {
   // ============================================================
   const allProducts = await prisma.product.findMany();
   for (const product of allProducts) {
-    const txns = await prisma.inventoryTransaction.findMany({ where: { productId: product.id } });
+    const txns = await prisma.inventoryTransaction.findMany({
+      where: { categoryId: product.categoryId },
+    });
     let stock = 0;
     for (const t of txns) {
       stock += t.type === TransactionType.STOCK_IN ? t.quantity : -t.quantity;

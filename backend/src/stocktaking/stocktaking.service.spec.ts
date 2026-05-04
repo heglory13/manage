@@ -18,6 +18,22 @@ function createMockPrisma(
   let recordIdCounter = 0;
 
   const mockPrisma = {
+    category: {
+      findMany: jest.fn().mockImplementation((args?: { where?: { id?: { in: string[] } } }) => {
+        const ids = args?.where?.id?.in;
+        const categoryIds =
+          ids ??
+          Array.from(productsMap.keys()).map((id) => `cat-${id}`);
+
+        return Promise.resolve(
+          categoryIds.map((categoryId) => ({
+            id: categoryId,
+            code: categoryId.toUpperCase(),
+            name: `Category ${categoryId}`,
+          })),
+        );
+      }),
+    },
     product: {
       findMany: jest.fn().mockImplementation((args?: { where?: Record<string, unknown> }) => {
         if (!args?.where || Object.keys(args.where).length === 0) {
@@ -28,7 +44,7 @@ function createMockPrisma(
               name: `Product ${p.id}`,
               sku: `SKU-${p.id}`,
               price: 100,
-              categoryId: 'cat-1',
+              categoryId: `cat-${p.id}`,
               stock: stockState.get(p.id) ?? p.stock,
               createdAt: new Date(),
               updatedAt: new Date(),
@@ -47,7 +63,7 @@ function createMockPrisma(
                 name: `Product ${product.id}`,
                 sku: `SKU-${product.id}`,
                 price: 100,
-                categoryId: 'cat-1',
+                categoryId: `cat-${product.id}`,
                 stock: stockState.get(id) ?? product.stock,
                 createdAt: new Date(),
                 updatedAt: new Date(),
@@ -70,8 +86,13 @@ function createMockPrisma(
             id: `item-${recordId}-${index}`,
             recordId,
             ...item,
-            product: productsMap.get(item.productId as string)
-              ? { id: item.productId, name: `Product ${item.productId}` }
+            product: null,
+            category: item.categoryId
+              ? {
+                  id: item.categoryId,
+                  code: item.itemCode,
+                  name: item.itemLabel,
+                }
               : null,
           }),
         );
@@ -102,6 +123,13 @@ function createMockPrisma(
       create: jest.fn().mockResolvedValue({ id: 'history-1' }),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    inventoryTransaction: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 'txn-1' }),
+    },
+    preliminaryCheck: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     $transaction: jest.fn().mockImplementation((operations: Promise<unknown>[]) => {
       return Promise.all(operations);
     }),
@@ -109,6 +137,17 @@ function createMockPrisma(
   };
 
   return mockPrisma;
+}
+
+function createMockInventoryService(
+  productsMap: Map<string, { id: string; stock: number }> = new Map(),
+) {
+  return {
+    getCurrentStockByCategory: jest.fn().mockImplementation((categoryId: string) => {
+      const productId = categoryId.replace(/^cat-/, '');
+      return Promise.resolve(productsMap.get(productId)?.stock ?? 0);
+    }),
+  };
 }
 
 describe('StocktakingService V2', () => {
@@ -120,7 +159,11 @@ describe('StocktakingService V2', () => {
         ['p3', { id: 'p3', stock: 5 }],
       ]);
       const mockPrisma = createMockPrisma(productsMap);
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const mockInventoryService = createMockInventoryService(productsMap);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       const result = await service.create('full', 'user-1');
 
@@ -143,7 +186,11 @@ describe('StocktakingService V2', () => {
         ['p3', { id: 'p3', stock: 5 }],
       ]);
       const mockPrisma = createMockPrisma(productsMap);
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const mockInventoryService = createMockInventoryService(productsMap);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       const result = await service.create('selected', 'user-1', ['p1', 'p3']);
 
@@ -154,7 +201,10 @@ describe('StocktakingService V2', () => {
 
     it('should throw when mode=selected with no productIds', async () => {
       const mockPrisma = createMockPrisma(new Map());
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        createMockInventoryService() as any,
+      );
 
       await expect(service.create('selected', 'user-1', [])).rejects.toThrow(BadRequestException);
       await expect(service.create('selected', 'user-1')).rejects.toThrow(BadRequestException);
@@ -165,6 +215,7 @@ describe('StocktakingService V2', () => {
     it('should reject submit when items with discrepancy lack reason', async () => {
       const productsMap = new Map([['p1', { id: 'p1', stock: 10 }]]);
       const mockPrisma = createMockPrisma(productsMap);
+      const mockInventoryService = createMockInventoryService(productsMap);
 
       mockPrisma.stocktakingRecord.findUnique.mockResolvedValue({
         id: 'record-1',
@@ -174,7 +225,10 @@ describe('StocktakingService V2', () => {
         ],
       });
 
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       // Submit with discrepancy but no reason
       await expect(
@@ -187,6 +241,7 @@ describe('StocktakingService V2', () => {
     it('should accept submit when items with discrepancy have reason', async () => {
       const productsMap = new Map([['p1', { id: 'p1', stock: 10 }]]);
       const mockPrisma = createMockPrisma(productsMap);
+      const mockInventoryService = createMockInventoryService(productsMap);
 
       mockPrisma.stocktakingRecord.findUnique.mockImplementation(({ where }: { where: { id: string } }) => {
         if (where.id === 'record-1') {
@@ -207,7 +262,10 @@ describe('StocktakingService V2', () => {
         status: 'PENDING',
       });
 
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       const result = await service.submit('record-1', [
         { itemId: 'item-1', actualQuantity: 8, discrepancyReason: 'Hàng bị hỏng' },
@@ -219,13 +277,17 @@ describe('StocktakingService V2', () => {
 
     it('should reject submit when record is not CHECKING', async () => {
       const mockPrisma = createMockPrisma(new Map());
+      const mockInventoryService = createMockInventoryService();
       mockPrisma.stocktakingRecord.findUnique.mockResolvedValue({
         id: 'record-1',
         status: 'PENDING',
         items: [],
       });
 
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       await expect(
         service.submit('record-1', []),
@@ -236,25 +298,33 @@ describe('StocktakingService V2', () => {
   describe('approve/reject - status transitions', () => {
     it('should only approve from PENDING status', async () => {
       const mockPrisma = createMockPrisma(new Map());
+      const mockInventoryService = createMockInventoryService();
       mockPrisma.stocktakingRecord.findUnique.mockResolvedValue({
         id: 'record-1',
         status: 'CHECKING',
         items: [],
       });
 
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       await expect(service.approve('record-1')).rejects.toThrow(BadRequestException);
     });
 
     it('should only reject from PENDING status', async () => {
       const mockPrisma = createMockPrisma(new Map());
+      const mockInventoryService = createMockInventoryService();
       mockPrisma.stocktakingRecord.findUnique.mockResolvedValue({
         id: 'record-1',
         status: 'APPROVED',
       });
 
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       await expect(service.reject('record-1')).rejects.toThrow(BadRequestException);
     });
@@ -262,11 +332,13 @@ describe('StocktakingService V2', () => {
     it('should record status history on approve', async () => {
       const productsMap = new Map([['p1', { id: 'p1', stock: 10 }]]);
       const mockPrisma = createMockPrisma(productsMap);
+      const mockInventoryService = createMockInventoryService(productsMap);
 
       mockPrisma.stocktakingRecord.findUnique.mockResolvedValue({
         id: 'record-1',
         status: 'PENDING',
-        items: [{ id: 'item-1', productId: 'p1', systemQuantity: 10, actualQuantity: 8, discrepancy: -2 }],
+        createdBy: 'user-1',
+        items: [{ id: 'item-1', categoryId: 'cat-p1', itemCode: 'CAT-P1', itemLabel: 'Category cat-p1', systemQuantity: 10, actualQuantity: 8, discrepancy: -2 }],
       });
       mockPrisma.stocktakingRecord.update.mockResolvedValue({
         id: 'record-1',
@@ -275,7 +347,10 @@ describe('StocktakingService V2', () => {
         creator: { id: 'user-1', name: 'Test', email: 'test@test.com', role: 'MANAGER' },
       });
 
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
       await service.approve('record-1', 'user-1');
 
       expect(mockPrisma.stocktakingStatusHistory.create).toHaveBeenCalledWith(
@@ -289,9 +364,13 @@ describe('StocktakingService V2', () => {
   describe('getStatusHistory()', () => {
     it('should throw NotFoundException for non-existent record', async () => {
       const mockPrisma = createMockPrisma(new Map());
+      const mockInventoryService = createMockInventoryService();
       mockPrisma.stocktakingRecord.findUnique.mockResolvedValue(null);
 
-      const service = new StocktakingService(mockPrisma as unknown as PrismaService);
+      const service = new StocktakingService(
+        mockPrisma as unknown as PrismaService,
+        mockInventoryService as any,
+      );
 
       await expect(service.getStatusHistory('non-existent')).rejects.toThrow(NotFoundException);
     });
@@ -303,7 +382,7 @@ describe('StocktakingService V2', () => {
    */
   describe('Property 16: Tính toán chênh lệch', () => {
     it('discrepancy = actual - system cho mọi (system, actual)', () => {
-      const service = new StocktakingService({} as PrismaService);
+      const service = new StocktakingService({} as PrismaService, {} as any);
 
       fc.assert(
         fc.property(
@@ -324,7 +403,7 @@ describe('StocktakingService V2', () => {
    */
   describe('validateDiscrepancyReasons', () => {
     it('rejects when discrepancy != 0 and no reason', () => {
-      const service = new StocktakingService({} as PrismaService);
+      const service = new StocktakingService({} as PrismaService, {} as any);
 
       fc.assert(
         fc.property(
@@ -340,7 +419,7 @@ describe('StocktakingService V2', () => {
     });
 
     it('accepts when discrepancy = 0 regardless of reason', () => {
-      const service = new StocktakingService({} as PrismaService);
+      const service = new StocktakingService({} as PrismaService, {} as any);
       const result = service.validateDiscrepancyReasons([
         { discrepancy: 0, discrepancyReason: null },
       ]);

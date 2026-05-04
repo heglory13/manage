@@ -230,6 +230,11 @@ export class InputDeclarationController {
     return this.skuComboService.create(dto);
   }
 
+  @Post('sku-combos/find-or-create')
+  findOrCreateSkuCombo(@Body() dto: CreateSkuComboDto) {
+    return this.skuComboService.findOrCreate(dto);
+  }
+
   @Delete('sku-combos/:id')
   deleteSkuCombo(@Param('id') id: string) {
     return this.skuComboService.delete(id);

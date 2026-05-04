@@ -2,7 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { Role } from '@prisma/client/index';
 import { Roles } from '../auth/decorators/index.js';
 import { DashboardService } from './dashboard.service.js';
-import { ChartQueryDto, TopProductsQueryDto, TopZonesQueryDto, DetailQueryDto, DetailTransactionsQueryDto } from './dto/index.js';
+import { ChartQueryDto, TopCategoriesQueryDto, TopZonesQueryDto, DetailQueryDto, DetailTransactionsQueryDto } from './dto/index.js';
 
 @Controller('dashboard')
 export class DashboardController {
@@ -32,10 +32,10 @@ export class DashboardController {
     return this.dashboardService.getAlertsAboveMax();
   }
 
-  @Get('top-products')
+  @Get('top-categories')
   @Roles(Role.MANAGER, Role.ADMIN)
-  async getTopProducts(@Query() query: TopProductsQueryDto) {
-    return this.dashboardService.getTopProducts(query.type ?? 'highest', query.limit ?? 20);
+  async getTopCategories(@Query() query: TopCategoriesQueryDto) {
+    return this.dashboardService.getTopCategories(query.type ?? 'highest', query.limit ?? 20);
   }
 
   @Get('top-zones')
@@ -50,10 +50,10 @@ export class DashboardController {
     return this.dashboardService.getChartDataV2(query.period ?? 'month');
   }
 
-  @Get('detail/products')
+  @Get('detail/categories')
   @Roles(Role.MANAGER, Role.ADMIN)
-  async getDetailProducts(@Query() query: DetailQueryDto) {
-    return this.dashboardService.getDetailProducts(
+  async getDetailCategories(@Query() query: DetailQueryDto) {
+    return this.dashboardService.getDetailCategories(
       query.page ?? 1,
       query.limit ?? 20,
       query.startDate,
