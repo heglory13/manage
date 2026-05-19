@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
 import { api } from '../services/api';
 import { formatNumber } from '../lib/utils';
@@ -20,6 +21,7 @@ interface StorageZone {
   name: string;
   maxCapacity: number;
   currentStock: number;
+  warehouseTypeId?: string | null;
 }
 
 interface Position {
@@ -72,11 +74,17 @@ function getPositionFill(position: Position) {
 }
 
 export default function WarehousePage() {
+  const { user } = useAuth();
+  const canCreate = Boolean(user?.permissions?.warehouse?.create);
+  const canEdit = Boolean(user?.permissions?.warehouse?.edit);
+  const canDelete = Boolean(user?.permissions?.warehouse?.delete);
+  const canSave = Boolean(user?.permissions?.warehouse?.save);
   const [warehouseTypes, setWarehouseTypes] = useState<WarehouseType[]>([]);
   const [storageZones, setStorageZones] = useState<StorageZone[]>([]);
   const [layouts, setLayouts] = useState<Layout[]>([]);
   const [selectedWarehouseTypeId, setSelectedWarehouseTypeId] = useState('');
   const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
+  const [selectedPositionDetail, setSelectedPositionDetail] = useState<{ skus: Array<{ compositeSku: string; quantity: number; classification?: string | null; color?: string | null; size?: string | null; material?: string | null; categoryName?: string | null }>; currentStock: number } | null>(null);
   const [showPositionDialog, setShowPositionDialog] = useState(false);
   const [editingLabel, setEditingLabel] = useState('');
   const [editingCapacity, setEditingCapacity] = useState('');
@@ -87,6 +95,8 @@ export default function WarehousePage() {
   const [draggingPosition, setDraggingPosition] = useState<Position | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [newZoneId, setNewZoneId] = useState('');
+  const [reassignZoneTypeId, setReassignZoneTypeId] = useState('');
+  const [isReassigning, setIsReassigning] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
@@ -122,7 +132,7 @@ export default function WarehousePage() {
   );
 
   const selectedLayout = useMemo(
-    () => layouts.find((layout) => layout.name === selectedWarehouseType?.name) || null,
+    () => layouts.find((layout) => layout.name.toLowerCase() === selectedWarehouseType?.name?.toLowerCase()) || null,
     [layouts, selectedWarehouseType],
   );
 
@@ -168,7 +178,7 @@ export default function WarehousePage() {
     if (!layout) return;
 
     const existingCount = layout.positions.length;
-    await api.post('/warehouse/positions', {
+    const res = await api.post('/warehouse/positions', {
       layoutId: layout.id,
       label: zone.name,
       x: 24 + (existingCount % 4) * 240,
@@ -177,17 +187,31 @@ export default function WarehousePage() {
       height: 150,
       maxCapacity: zone.maxCapacity,
     });
+    if (res.data?.reactivated) {
+      window.alert(
+        `Vị trí "${zone.name}" đã được khôi phục từ lịch sử trước đó.\nTồn kho và lịch sử giao dịch cũ được giữ nguyên (${res.data.currentStock ?? 0} sản phẩm).`,
+      );
+    }
     setNewZoneId('');
     await fetchData();
   };
 
-  const handlePositionClick = (position: Position) => {
+  const handlePositionClick = async (position: Position) => {
     setSelectedPosition(position);
     setEditingLabel(position.label || '');
     setEditingCapacity(position.maxCapacity?.toString() || '');
     setEditingWidth(position.width?.toString() || '200');
     setEditingHeight(position.height?.toString() || '150');
+    setReassignZoneTypeId('');
     setShowPositionDialog(true);
+
+    // Fetch fresh stock data from API for this position
+    try {
+      const detailRes = await api.get(`/warehouse/positions/${position.id}/skus`);
+      setSelectedPositionDetail(detailRes.data || { skus: [], currentStock: 0 });
+    } catch {
+      setSelectedPositionDetail(null);
+    }
   };
 
   const handleSavePosition = async () => {
@@ -211,12 +235,43 @@ export default function WarehousePage() {
 
   const handleDeletePosition = async () => {
     if (!selectedPosition) return;
-    await api.delete(`/warehouse/positions/${selectedPosition.id}`, {
-      data: { force: false },
-    });
+    try {
+      await api.delete(`/warehouse/positions/${selectedPosition.id}`, {
+        data: { force: false },
+      });
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? 'Vị trí có dữ liệu liên quan.';
+      const confirmed = window.confirm(`${msg}\n\nBấm OK để xóa bắt buộc.`);
+      if (!confirmed) return;
+      await api.delete(`/warehouse/positions/${selectedPosition.id}`, {
+        data: { force: true },
+      });
+    }
     setShowPositionDialog(false);
     setSelectedPosition(null);
     await fetchData();
+  };
+
+  const handleReassignZoneType = async (newTypeId: string | null) => {
+    if (!selectedPosition) return;
+    const zone = storageZones.find((z) => z.name.toLowerCase() === selectedPosition.label.toLowerCase());
+    if (!zone) return;
+    setIsReassigning(true);
+    try {
+      await api.patch(`/input-declarations/storage-zones/${zone.id}`, {
+        name: zone.name,
+        maxCapacity: zone.maxCapacity,
+        warehouseTypeId: newTypeId ?? '',
+      });
+      await fetchData();
+      setReassignZoneTypeId('');
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Không thể cập nhật loại kho');
+    } finally {
+      setIsReassigning(false);
+    }
   };
 
   const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
@@ -338,7 +393,11 @@ export default function WarehousePage() {
               onChange={(v) => setNewZoneId(v)}
               placeholder="Chọn thùng / khu vực để gán"
             />
-            <Button onClick={handleAddZone} disabled={!newZoneId || !selectedWarehouseType}>
+            <Button variant="outline" onClick={() => void fetchData()}>
+              <RefreshCw size={16} className="mr-2" />
+              Tai lai
+            </Button>
+            <Button onClick={handleAddZone} disabled={!newZoneId || !selectedWarehouseType || !canCreate}>
               <Plus size={16} className="mr-2" />
               Thêm khu vực
             </Button>
@@ -421,8 +480,8 @@ export default function WarehousePage() {
                         </div>
                         {position.skus && position.skus.length > 0 && (
                           <div className="mt-2 space-y-1 text-[10px] leading-4 text-slate-700">
-                            {position.skus.slice(0, 5).map((sku) => (
-                              <div key={sku.compositeSku} className="rounded bg-white/80 px-1.5 py-1 text-left">
+                            {position.skus.slice(0, 5).map((sku, idx) => (
+                              <div key={sku.compositeSku || idx} className="rounded bg-white/80 px-1.5 py-1 text-left">
                                 <div className="truncate font-semibold">
                                   {[sku.classification, sku.color, sku.size, sku.material].filter(Boolean).join(' - ') || sku.compositeSku}
                                 </div>
@@ -491,35 +550,85 @@ export default function WarehousePage() {
                   <CardTitle className="text-base">Chi tiết vị trí - {selectedPosition.label}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {(() => {
+                    const zone = storageZones.find((z) => z.name.toLowerCase() === selectedPosition.label.toLowerCase());
+                    const currentType = warehouseTypes.find((t) => t.id === zone?.warehouseTypeId);
+                    return (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Kho đang gán</p>
+                        <p className="text-sm font-medium text-slate-900">
+                          {currentType ? currentType.name : <span className="text-slate-400 italic">Chưa gán kho</span>}
+                        </p>
+                        {canEdit && (
+                          <div className="space-y-2 pt-1">
+                            <select
+                              className="form-select w-full text-sm"
+                              value={reassignZoneTypeId}
+                              onChange={(e) => setReassignZoneTypeId(e.target.value)}
+                              disabled={isReassigning}
+                            >
+                              <option value="">— Gỡ gán (không thuộc kho nào) —</option>
+                              {warehouseTypes.map((t) => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                              ))}
+                            </select>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="w-full text-sm"
+                              disabled={isReassigning || reassignZoneTypeId === (zone?.warehouseTypeId ?? '')}
+                              onClick={() => handleReassignZoneType(reassignZoneTypeId || null)}
+                            >
+                              {isReassigning ? 'Đang cập nhật...' : 'Cập nhật kho'}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div>
                     <p className="text-sm text-slate-500">Sức chứa</p>
                     <p className="font-medium text-slate-900">
-                      {selectedPosition.currentStock} / {selectedPosition.maxCapacity || 'Không giới hạn'}
+                      {selectedPositionDetail?.currentStock ?? selectedPosition.currentStock} / {selectedPosition.maxCapacity || 'Không giới hạn'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-slate-500">Số loại SKU trong thùng</p>
+                    <p className="text-sm text-slate-500">Số loại sản phẩm trong thùng</p>
                     <p className="font-medium text-slate-900">
-                      {selectedPosition.skus?.length || 0} loại
+                      {selectedPositionDetail?.skus?.length || selectedPosition.skus?.length || 0} loại
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-slate-500">SKU đang có trong vị trí</p>
-                    <div className="mt-2 max-h-[220px] space-y-2 overflow-auto">
-                      {selectedPosition.skus && selectedPosition.skus.length > 0 ? (
-                        selectedPosition.skus.map((sku) => (
-                          <div key={sku.compositeSku} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
-                            <div className="min-w-0">
-                              <div className="truncate font-medium">
-                                {[sku.classification, sku.color, sku.size, sku.material].filter(Boolean).join(' - ') || sku.compositeSku}
+                    <p className="text-sm text-slate-500">Sản phẩm đang có trong vị trí</p>
+                    <div className="mt-2 max-h-[420px] w-full space-y-2 overflow-y-auto overflow-x-hidden">
+                      {(selectedPositionDetail?.skus && selectedPositionDetail.skus.length > 0) ? (
+                        selectedPositionDetail.skus.map((sku, idx) => {
+                          const productName = [sku.classification, sku.color, sku.size, sku.material].filter(Boolean).join(' - ') || sku.categoryName || sku.compositeSku;
+                          return (
+                            <div key={sku.compositeSku || idx} className="rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                              <div className="font-medium text-slate-900 break-words">{productName}</div>
+                              <div className="mt-0.5 flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate font-mono text-xs text-slate-400">{sku.compositeSku || ''}</span>
+                                <span className="shrink-0 font-semibold text-slate-900">{formatNumber(sku.quantity)}</span>
                               </div>
-                              <div className="truncate font-mono text-xs text-slate-500">{sku.compositeSku}</div>
                             </div>
-                            <span className="font-medium">{formatNumber(sku.quantity)}</span>
-                          </div>
-                        ))
+                          );
+                        })
+                      ) : selectedPosition.skus && selectedPosition.skus.length > 0 ? (
+                        selectedPosition.skus.map((sku, idx) => {
+                          const productName = [sku.classification, sku.color, sku.size, sku.material].filter(Boolean).join(' - ') || sku.compositeSku;
+                          return (
+                            <div key={sku.compositeSku || idx} className="rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                              <div className="font-medium text-slate-900 break-words">{productName}</div>
+                              <div className="mt-0.5 flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate font-mono text-xs text-slate-400">{sku.compositeSku || ''}</span>
+                                <span className="shrink-0 font-semibold text-slate-900">{formatNumber(sku.quantity)}</span>
+                              </div>
+                            </div>
+                          );
+                        })
                       ) : (
-                        <div className="rounded-xl bg-slate-50 px-3 py-4 text-sm text-slate-500">Chưa có SKU trong vị trí này.</div>
+                        <div className="rounded-xl bg-slate-50 px-3 py-4 text-sm text-slate-500">Chưa có sản phẩm trong vị trí này.</div>
                       )}
                     </div>
                   </div>
@@ -557,11 +666,13 @@ export default function WarehousePage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPositionDialog(false)}>Hủy</Button>
-            <Button variant="outline" onClick={handleDeletePosition}>
-              <Trash2 size={16} className="mr-2" />
-              Xóa vị trí
-            </Button>
-            <Button onClick={handleSavePosition}>Lưu</Button>
+            {canDelete && (
+              <Button variant="outline" onClick={handleDeletePosition}>
+                <Trash2 size={16} className="mr-2" />
+                Xóa vị trí
+              </Button>
+            )}
+            <Button onClick={handleSavePosition} disabled={!canSave && !canEdit}>Lưu</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

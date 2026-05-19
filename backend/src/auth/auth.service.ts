@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { User } from '@prisma/client/index';
@@ -37,20 +34,16 @@ export class AuthService {
     };
 
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(
-        { ...payload } as Record<string, unknown>,
-        {
-          secret: this.configService.get<string>('JWT_SECRET'),
-          expiresIn: (this.configService.get<string>('JWT_EXPIRES_IN') ?? '24h') as any,
-        },
-      ),
-      this.jwtService.signAsync(
-        { ...payload } as Record<string, unknown>,
-        {
-          secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-          expiresIn: (this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d') as any,
-        },
-      ),
+      this.jwtService.signAsync({ ...payload } as Record<string, unknown>, {
+        secret: this.configService.get<string>('JWT_SECRET'),
+        expiresIn: (this.configService.get<string>('JWT_EXPIRES_IN') ??
+          '24h') as any,
+      }),
+      this.jwtService.signAsync({ ...payload } as Record<string, unknown>, {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+        expiresIn: (this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ??
+          '7d') as any,
+      }),
     ]);
 
     // Store hashed refresh token in database
@@ -88,6 +81,12 @@ export class AuthService {
     if (!isRefreshTokenValid) {
       throw new UnauthorizedException('Unauthorized');
     }
+
+    // Invalidate old token before issuing new one to prevent reuse of stolen tokens
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken: null },
+    });
 
     return this.generateTokens(user);
   }

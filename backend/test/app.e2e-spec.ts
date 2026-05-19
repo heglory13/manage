@@ -17,9 +17,7 @@ describe('AppController (e2e)', () => {
   });
 
   it('/ (GET) should return 401 without auth token', () => {
-    return request(app.getHttpServer())
-      .get('/')
-      .expect(401);
+    return request(app.getHttpServer()).get('/').expect(401);
   });
 
   afterEach(async () => {

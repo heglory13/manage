@@ -117,6 +117,9 @@ describe('Feature: inventory-management-system', () => {
         category: {
           findUnique: jest.fn(),
         },
+        inventoryTransaction: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
         product: {
           create: jest.fn(),
           findMany: jest.fn(),
@@ -131,6 +134,38 @@ describe('Feature: inventory-management-system', () => {
       };
 
       productService = new ProductService(mockPrisma, mockSkuGenerator);
+    });
+
+    it('should return computed stock from active transactions in findAll', async () => {
+      mockPrisma.product.findMany.mockResolvedValue([
+        {
+          id: 'prod-1',
+          name: 'San pham A',
+          sku: 'SKU-A',
+          stock: 999,
+          minThreshold: 5,
+          maxThreshold: 20,
+          categoryId: 'cat-1',
+          category: { id: 'cat-1', name: 'Cat A' },
+        },
+      ]);
+      mockPrisma.product.count.mockResolvedValue(1);
+      mockPrisma.inventoryTransaction.findMany.mockResolvedValue([
+        { categoryId: 'cat-1', type: 'STOCK_IN', quantity: 10 },
+        { categoryId: 'cat-1', type: 'STOCK_OUT', quantity: 3 },
+      ]);
+
+      const result = await productService.findAll({ page: 1, limit: 10 });
+
+      expect(result.data[0].stock).toBe(7);
+      expect(mockPrisma.inventoryTransaction.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: 'ACTIVE',
+            categoryId: { in: ['cat-1'] },
+          }),
+        }),
+      );
     });
 
     it('should update threshold with valid non-negative value', async () => {

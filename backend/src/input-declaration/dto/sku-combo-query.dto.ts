@@ -12,4 +12,9 @@ export class SkuComboQueryDto {
   @IsOptional()
   @IsNumberString()
   limit?: string;
+
+  /** When "true", only return SKU combos that have stock > 0 (for stock-out dropdown). */
+  @IsOptional()
+  @IsString()
+  stockOut?: string;
 }

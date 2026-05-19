@@ -147,9 +147,7 @@ describe('Auth Flow (e2e)', () => {
         .send({ email: 'staff@test.com', password: 'wrongpassword' })
         .expect(401);
 
-      expect(response.body.message).toBe(
-        'Thông tin đăng nhập không chính xác',
-      );
+      expect(response.body.message).toBe('Thông tin đăng nhập không chính xác');
     });
 
     it('Step 2: Should access protected endpoint with valid token', async () => {

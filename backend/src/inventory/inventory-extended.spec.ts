@@ -28,9 +28,22 @@ describe('InventoryService - StorageZone flow', () => {
       },
       inventoryTransaction: {
         findFirst: jest.fn().mockResolvedValue({ purchasePrice: 100 }),
-        findMany: jest.fn().mockResolvedValue([
-          { type: 'STOCK_IN', quantity: 50 },
-        ]),
+        findMany: jest.fn().mockImplementation(({ where }: any) => {
+          // When querying by skuComboId, return zone-enriched transactions
+          if (where?.skuComboId) {
+            return Promise.resolve([
+              {
+                type: 'STOCK_IN',
+                quantity: 50,
+                storageZoneId: 'zone-1',
+                storageZone: { id: 'zone-1', name: 'OV1' },
+              },
+            ]);
+          }
+          return Promise.resolve([
+            { type: 'STOCK_IN', quantity: 50, status: 'ACTIVE' },
+          ]);
+        }),
         create: jest.fn().mockImplementation(({ data }) => ({
           id: 'tx-1',
           ...data,
@@ -38,14 +51,17 @@ describe('InventoryService - StorageZone flow', () => {
         })),
         count: jest.fn().mockResolvedValue(0),
       },
+      product: {
+        findFirst: jest.fn().mockResolvedValue({ isDiscontinued: false }),
+      },
       warehouseConfig: {
         findFirst: jest.fn().mockResolvedValue({ maxCapacity: 1000 }),
       },
-      $transaction: jest.fn().mockImplementation(async (ops) => {
-        const results = [];
-        for (const op of ops) results.push(await op);
-        return results;
-      }),
+      $transaction: jest.fn().mockImplementation((fnOrOps: unknown) =>
+        typeof fnOrOps === 'function'
+          ? (fnOrOps as (tx: unknown) => Promise<unknown>)(prisma)
+          : Promise.all(fnOrOps as Array<Promise<unknown>>),
+      ),
     };
 
     const module = await Test.createTestingModule({
@@ -59,7 +75,9 @@ describe('InventoryService - StorageZone flow', () => {
   });
 
   it('stockIn should succeed when zone has enough capacity', async () => {
-    (prisma.storageZone as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+    (
+      prisma.storageZone as Record<string, jest.Mock>
+    ).findUnique.mockResolvedValue({
       id: 'zone-1',
       name: 'OV1',
       maxCapacity: 100,
@@ -76,7 +94,9 @@ describe('InventoryService - StorageZone flow', () => {
   });
 
   it('stockIn should throw when zone is full', async () => {
-    (prisma.storageZone as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+    (
+      prisma.storageZone as Record<string, jest.Mock>
+    ).findUnique.mockResolvedValue({
       id: 'zone-1',
       name: 'OV1',
       maxCapacity: 100,
@@ -93,7 +113,9 @@ describe('InventoryService - StorageZone flow', () => {
   });
 
   it('stockIn should throw when quantity exceeds remaining capacity', async () => {
-    (prisma.storageZone as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+    (
+      prisma.storageZone as Record<string, jest.Mock>
+    ).findUnique.mockResolvedValue({
       id: 'zone-1',
       name: 'OV1',
       maxCapacity: 100,
@@ -110,7 +132,9 @@ describe('InventoryService - StorageZone flow', () => {
   });
 
   it('stockIn should throw for non-existent zone', async () => {
-    (prisma.storageZone as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+    (
+      prisma.storageZone as Record<string, jest.Mock>
+    ).findUnique.mockResolvedValue(null);
 
     await expect(
       service.stockIn('cat-1', 10, 'user-1', {
@@ -128,7 +152,9 @@ describe('InventoryService - StorageZone flow', () => {
       storageZoneId: 'zone-1',
     });
 
-    const createCall = (prisma.inventoryTransaction as Record<string, jest.Mock>).create.mock.calls[0][0];
+    const createCall = (
+      prisma.inventoryTransaction as Record<string, jest.Mock>
+    ).create.mock.calls[0][0];
     expect(createCall.data.categoryId).toBe('cat-1');
     expect(createCall.data.skuComboId).toBe('combo-1');
     expect(createCall.data.productConditionId).toBe('cond-1');

@@ -1,11 +1,17 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class StockOutDto {
   @IsString()
   @IsNotEmpty()
   categoryId!: string;
 
-  @IsNumber()
+  @IsInt({ message: 'So luong phai la so nguyen' })
   @Min(1, { message: 'Số lượng xuất kho phải lớn hơn 0' })
   quantity!: number;
 

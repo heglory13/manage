@@ -1,15 +1,24 @@
-import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
 
 export class StockInDto {
   @IsString()
   categoryId!: string;
 
-  @IsNumber()
+  @IsInt({ message: 'So luong phai la so nguyen' })
   @Min(1, { message: 'So luong nhap kho phai lon hon 0' })
   quantity!: number;
 
   @IsNumber()
-  @Min(1, { message: 'Gia nhap phai lon hon 0' })
+  @Min(0, { message: 'Gia nhap khong duoc am' })
   purchasePrice!: number;
 
   @IsOptional()
@@ -31,10 +40,14 @@ export class StockInDto {
 
   @IsOptional()
   @IsString()
-  preliminaryCheckId?: string;
+  warehouseTypeId?: string;
 
   @IsOptional()
   @IsString()
+  preliminaryCheckId?: string;
+
+  @IsOptional()
+  @IsDateString()
   actualStockDate?: string;
 
   @IsOptional()
@@ -44,4 +57,9 @@ export class StockInDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  imageUrls?: string[];
 }

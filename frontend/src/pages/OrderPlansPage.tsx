@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarClock, FileText, Pencil, ShoppingCart, Trash2, User } from 'lucide-react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CalendarClock, Download, FileText, Pencil, ShoppingCart, Trash2, User } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import * as XLSX from 'xlsx';
 import AppLayout from '../components/layout/AppLayout';
 import { api } from '../services/api';
 import { Button } from '../components/ui/button';
@@ -8,7 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { formatNumber } from '../lib/utils';
+import { formatNumber, matchSel } from '../lib/utils';
 import SmartFilter, { type FilterField } from '../components/common/SmartFilter';
 import { useSavedFilters } from '../hooks/useSavedFilters';
 import { SearchableSelect } from '../components/ui/searchable-select';
@@ -80,10 +82,18 @@ function formatDate(value?: string | null) {
 }
 
 export default function OrderPlansPage() {
+  const { user } = useAuth();
+  const canCreate = Boolean(user?.permissions?.orderPlans?.create);
+  const canEdit = Boolean(user?.permissions?.orderPlans?.edit);
+  const canDelete = Boolean(user?.permissions?.orderPlans?.delete);
+  const canSave = Boolean(user?.permissions?.orderPlans?.save);
   const [categories, setCategories] = useState<AttributeOption[]>([]);
   const [warehouseTypes, setWarehouseTypes] = useState<AttributeOption[]>([]);
   const [rows, setRows] = useState<OrderPlanRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [opPage, setOpPage] = useState(1);
+  const [opPageSize, setOpPageSize] = useState(50);
+  const [opTotal, setOpTotal] = useState(0);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [editingRow, setEditingRow] = useState<OrderPlanRow | null>(null);
@@ -120,7 +130,12 @@ export default function OrderPlansPage() {
       key: 'category',
       label: 'Danh mục SP',
       type: 'select',
-      options: categories.map((c) => ({ value: c.id, label: c.name })),
+      placeholder: 'Gõ để tìm danh mục...',
+      asyncLoad: async () => {
+        const res = await api.get('/categories');
+        const items = res.data.data || res.data || [];
+        return items.map((c: any) => ({ value: c.id, label: c.name }));
+      },
     },
     {
       key: 'customerName',
@@ -129,24 +144,34 @@ export default function OrderPlansPage() {
       placeholder: 'Lọc khách hàng...',
     },
     {
-      key: 'date',
-      label: 'Ngày tạo',
+      key: 'dateFrom',
+      label: 'Từ ngày',
       type: 'date',
     },
-  ], [categories]);
+    {
+      key: 'dateTo',
+      label: 'Đến ngày',
+      type: 'date',
+    },
+  ], []);
 
   const filteredRows = useMemo(() => {
     const f = savedFilterHook.filters;
     if (Object.keys(f).length === 0) return rows;
 
     return rows.filter((item) => {
-      if (f.type && item.type !== f.type) return false;
-      if (f.status && item.status !== f.status) return false;
-      if (f.category && item.category?.id !== f.category) return false;
+      if (!matchSel(f.type, item.type)) return false;
+      if (!matchSel(f.status, item.status)) return false;
+      if (!matchSel(f.category, item.category?.id)) return false;
       if (f.customerName && !item.customerName?.toLowerCase().includes(String(f.customerName).toLowerCase())) return false;
-      if (f.date) {
-        const itemDate = new Date(item.createdAt).toISOString().slice(0, 10);
-        if (itemDate !== f.date) return false;
+      if (f.dateFrom) {
+        const from = new Date(f.dateFrom as string);
+        if (new Date(item.createdAt) < from) return false;
+      }
+      if (f.dateTo) {
+        const to = new Date(f.dateTo as string);
+        to.setHours(23, 59, 59, 999);
+        if (new Date(item.createdAt) > to) return false;
       }
       return true;
     });
@@ -158,18 +183,20 @@ export default function OrderPlansPage() {
     setWarehouseTypes(res.data.warehouseTypes || []);
   }, []);
 
-  const fetchRows = useCallback(async () => {
+  const fetchRows = useCallback(async (page = opPage) => {
     setIsLoading(true);
     try {
-      const res = await api.get('/order-plans', { params: { limit: 100 } });
+      const res = await api.get('/order-plans', { params: { limit: opPageSize, page } });
       setRows(res.data.data || []);
+      setOpTotal(res.data.total || 0);
+      setOpPage(page);
     } catch (error) {
       console.error('Error fetching order plans:', error);
       setRows([]);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [opPageSize, opPage]);
 
   useEffect(() => {
     void fetchMetadata();
@@ -301,6 +328,25 @@ export default function OrderPlansPage() {
     }
   };
 
+  const handleExportExcel = () => {
+    const data = filteredRows.map((row) => ({
+      'Ngày tạo': formatDateTime(row.createdAt),
+      'Loại kế hoạch': typeLabel(row.type),
+      'Danh mục SP': row.category?.name || '-',
+      'Loại kho': row.warehouseType?.name || '-',
+      'Số lượng': row.quantity,
+      'Khách hàng': row.customerName || '-',
+      'SĐT': row.customerPhone || '-',
+      'Trạng thái': statusLabel(row.status),
+      'Ngày dự kiến': formatDate(row.expectedArrivalDate),
+      'Ghi chú': row.note || '-',
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Kế hoạch đặt hàng');
+    XLSX.writeFile(wb, 'ke-hoach-dat-hang.xlsx');
+  };
+
   const handleDelete = async (row: OrderPlanRow) => {
     if (!window.confirm(`Xoa ke hoach dat hang tao luc ${formatDateTime(row.createdAt)}?`)) {
       return;
@@ -325,20 +371,27 @@ export default function OrderPlansPage() {
             </p>
           </div>
 
-          <Button className="h-11 rounded-2xl bg-violet-600 px-5 hover:bg-violet-700" onClick={openCreateModal}>
+          <Button className="h-11 rounded-2xl bg-violet-600 px-5 hover:bg-violet-700" onClick={openCreateModal} disabled={!canCreate}>
             <FileText size={16} />
             Tao ke hoach dat hang
+          </Button>
+          <Button variant="outline" className="gap-2" onClick={handleExportExcel}>
+            <Download size={16} />
+            Xuất Excel
           </Button>
         </div>
 
         <SmartFilter
           fields={filterFields}
           filters={savedFilterHook.filters}
+          draftFilters={savedFilterHook.draftFilters}
           savedFilters={savedFilterHook.savedFilters}
           activeFilterId={savedFilterHook.activeFilterId}
+          hasPendingChanges={savedFilterHook.hasPendingChanges}
           onUpdateFilter={savedFilterHook.updateFilter}
           onRemoveFilter={savedFilterHook.removeFilter}
           onClearFilters={savedFilterHook.clearFilters}
+          onApplyDraftFilters={savedFilterHook.applyDraftFilters}
           onApplyFilter={savedFilterHook.applyFilter}
           onSaveFilter={savedFilterHook.saveFilter}
           onDeleteFilter={savedFilterHook.deleteFilter}
@@ -353,6 +406,7 @@ export default function OrderPlansPage() {
             ) : filteredRows.length === 0 ? (
               <div className="py-14 text-center text-slate-500">Chua co ke hoach dat hang nao.</div>
             ) : (
+              <div className="hidden md:block overflow-x-auto">
               <Table className="border-none">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -392,30 +446,115 @@ export default function OrderPlansPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-slate-600">{formatDate(item.expectedArrivalDate)}</TableCell>
-                      <TableCell className="max-w-[260px] text-[15px] text-slate-500">{item.note || '-'}</TableCell>
+                      <TableCell className="max-w-[150px] md:max-w-[260px] text-[15px] text-slate-500">{item.note || '-'}</TableCell>
                       <TableCell className="pr-4">
                         <div className="flex justify-end gap-2">
-                          {item.status === 'PLANNED' && (
+                          {item.status === 'PLANNED' && canSave && (
                             <Button variant="outline" size="sm" onClick={() => openConfirmModal(item)}>
                               <CalendarClock size={14} />
                               Xac nhan da dat hang
                             </Button>
                           )}
-                          <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
+                          <Button variant="outline" size="sm" onClick={() => openEditModal(item)} disabled={!canEdit}>
                             <Pencil size={14} />
                             Sua
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(item)}>
-                            <Trash2 size={14} />
-                            Xoa
-                          </Button>
+                          {canDelete && (
+                            <Button variant="outline" size="sm" onClick={() => handleDelete(item)}>
+                              <Trash2 size={14} />
+                              Xoa
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
+              </div>
             )}
+
+            {/* Mobile card list */}
+            {!isLoading && filteredRows.length > 0 && (
+              <div className="md:hidden divide-y divide-slate-100">
+                {filteredRows.map((item) => (
+                  <div key={item.id} className="px-4 py-4">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium ${item.type === 'PREORDER' ? 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>
+                          {typeLabel(item.type)}
+                        </span>
+                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${statusBadgeClass(item.status)}`}>
+                          {statusLabel(item.status)}
+                        </span>
+                      </div>
+                      <div className="text-xl font-bold tabular-nums text-slate-900 shrink-0">{formatNumber(item.quantity)}</div>
+                    </div>
+
+                    <div className="mb-2">
+                      <div className="font-semibold text-slate-900">{item.category?.name || '-'}</div>
+                      {item.warehouseType?.name && <div className="text-sm text-slate-500">{item.warehouseType.name}</div>}
+                      {item.type === 'PREORDER' && item.customerName && (
+                        <div className="text-sm text-slate-600 mt-0.5">{item.customerName}{item.customerPhone ? ` · ${item.customerPhone}` : ''}</div>
+                      )}
+                    </div>
+
+                    <div className="space-y-0.5 text-xs text-slate-500 mb-3">
+                      <div className="flex gap-2"><span className="w-20 shrink-0">Ngày tạo</span><span>{formatDateTime(item.createdAt)}</span></div>
+                      {item.expectedArrivalDate && (
+                        <div className="flex gap-2"><span className="w-20 shrink-0">Dự kiến có</span><span>{formatDate(item.expectedArrivalDate)}</span></div>
+                      )}
+                      {item.note && <div className="flex gap-2"><span className="w-20 shrink-0">Ghi chú</span><span>{item.note}</span></div>}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {item.status === 'PLANNED' && canSave && (
+                        <Button variant="outline" size="sm" className="h-8" onClick={() => openConfirmModal(item)}>
+                          <CalendarClock size={13} /> Xác nhận
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" className="h-8" onClick={() => openEditModal(item)} disabled={!canEdit}>
+                        <Pencil size={13} /> Sửa
+                      </Button>
+                      {canDelete && (
+                        <Button variant="outline" size="sm" className="h-8 border-rose-200 text-rose-600 hover:bg-rose-50" onClick={() => handleDelete(item)}>
+                          <Trash2 size={13} /> Xóa
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pagination */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <span>Hiển thị</span>
+                <select
+                  className="form-select page-size-select h-9 w-20 text-sm"
+                  value={opPageSize}
+                  onChange={(e) => { setOpPageSize(Number(e.target.value)); setOpPage(1); }}
+                >
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                </select>
+                <span>/ trang • Tổng {opTotal} mục</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" disabled={opPage <= 1} onClick={() => fetchRows(opPage - 1)}>
+                  Trước
+                </Button>
+                <span className="px-3 text-sm font-medium text-slate-700">
+                  Trang {opPage} / {Math.ceil(opTotal / opPageSize) || 1}
+                </span>
+                <Button variant="outline" size="sm" disabled={opPage >= Math.ceil(opTotal / opPageSize)} onClick={() => fetchRows(opPage + 1)}>
+                  Sau
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -439,7 +578,7 @@ export default function OrderPlansPage() {
 
           {createStep === 1 ? (
             <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <button
                   type="button"
                   className={`rounded-3xl border p-5 text-left transition ${form.type === 'STOCK' ? 'border-violet-500 bg-violet-50' : 'border-slate-200 bg-white hover:border-violet-300'}`}
@@ -462,7 +601,7 @@ export default function OrderPlansPage() {
           ) : null}
 
           {createStep === 2 ? (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Ten KH</Label>
                 <Input value={form.customerName} onChange={(e) => setForm((prev) => ({ ...prev, customerName: e.target.value }))} />
@@ -475,9 +614,9 @@ export default function OrderPlansPage() {
           ) : null}
 
           {createStep === 3 ? (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
               {form.type === 'PREORDER' ? (
-                <div className="rounded-2xl border border-violet-100 bg-violet-50/70 p-4 md:col-span-2">
+                <div className="rounded-2xl border border-violet-100 bg-violet-50/70 p-4 sm:col-span-2">
                   <div className="flex items-start gap-3">
                     <User size={18} className="mt-0.5 text-violet-600" />
                     <div>
@@ -517,7 +656,7 @@ export default function OrderPlansPage() {
                 Sau khi tao se hien thi thanh 1 dong giao dich de theo doi va co the xac nhan da dat hang kem ngay du kien co hang.
               </div>
 
-              <div className="space-y-2 md:col-span-2">
+              <div className="space-y-2 sm:col-span-2">
                 <Label>Ghi chu</Label>
                 <p className="text-xs text-slate-500">{noteHelperText}</p>
                 <textarea
@@ -539,7 +678,7 @@ export default function OrderPlansPage() {
                 Tiep tuc
               </Button>
             ) : (
-              <Button type="button" onClick={submit} disabled={!canSubmit || isSubmitting}>
+              <Button type="button" onClick={submit} disabled={!canSubmit || isSubmitting || (isEditing ? !canSave : !canCreate)}>
                 {isSubmitting ? 'Dang luu...' : isEditing ? 'Luu cap nhat' : 'Tao ke hoach'}
               </Button>
             )}

@@ -40,11 +40,11 @@ describe('InventoryService - Storage zone capacity', () => {
       warehouseConfig: {
         findFirst: jest.fn().mockResolvedValue({ maxCapacity: 1000 }),
       },
-      $transaction: jest.fn().mockImplementation(async (ops) => {
-        const results = [];
-        for (const op of ops) results.push(await op);
-        return results;
-      }),
+      $transaction: jest.fn().mockImplementation((fnOrOps: unknown) =>
+        typeof fnOrOps === 'function'
+          ? (fnOrOps as (tx: unknown) => Promise<unknown>)(prisma)
+          : Promise.all(fnOrOps as Array<Promise<unknown>>),
+      ),
     };
 
     const module = await Test.createTestingModule({
@@ -67,7 +67,9 @@ describe('InventoryService - Storage zone capacity', () => {
           const remaining = maxCapacity - validCurrentStock;
 
           if (remaining <= 0) {
-            (prisma.storageZone as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            (
+              prisma.storageZone as Record<string, jest.Mock>
+            ).findUnique.mockResolvedValue({
               id: 'zone-1',
               name: 'Test Zone',
               maxCapacity,
@@ -82,7 +84,9 @@ describe('InventoryService - Storage zone capacity', () => {
               }),
             ).rejects.toThrow(BadRequestException);
           } else {
-            (prisma.storageZone as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            (
+              prisma.storageZone as Record<string, jest.Mock>
+            ).findUnique.mockResolvedValue({
               id: 'zone-1',
               name: 'Test Zone',
               maxCapacity,
@@ -105,22 +109,27 @@ describe('InventoryService - Storage zone capacity', () => {
 
   it('should reject with full-zone message when current stock reaches max capacity', async () => {
     await fc.assert(
-      fc.asyncProperty(fc.integer({ min: 1, max: 1000 }), async (maxCapacity) => {
-        (prisma.storageZone as Record<string, jest.Mock>).findUnique.mockResolvedValue({
-          id: 'zone-1',
-          name: 'Test Zone',
-          maxCapacity,
-          currentStock: maxCapacity,
-        });
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 1000 }),
+        async (maxCapacity) => {
+          (
+            prisma.storageZone as Record<string, jest.Mock>
+          ).findUnique.mockResolvedValue({
+            id: 'zone-1',
+            name: 'Test Zone',
+            maxCapacity,
+            currentStock: maxCapacity,
+          });
 
-        await expect(
-          service.stockIn('cat-1', 1, 'user-1', {
-            storageZoneId: 'zone-1',
-            purchasePrice: 100,
-            salePrice: 150,
-          }),
-        ).rejects.toThrow('Khu vực này đã đầy, không thể nhập thêm hàng');
-      }),
+          await expect(
+            service.stockIn('cat-1', 1, 'user-1', {
+              storageZoneId: 'zone-1',
+              purchasePrice: 100,
+              salePrice: 150,
+            }),
+          ).rejects.toThrow('Khu vực này đã đầy, không thể nhập thêm hàng');
+        },
+      ),
       { numRuns: 100 },
     );
   });

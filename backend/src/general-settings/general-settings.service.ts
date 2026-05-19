@@ -28,7 +28,11 @@ const DEFAULT_SETTINGS: GeneralSettings = {
 
 @Injectable()
 export class GeneralSettingsService {
-  private readonly settingsPath = join(process.cwd(), 'storage', 'general-settings.json');
+  private readonly settingsPath = join(
+    process.cwd(),
+    'storage',
+    'general-settings.json',
+  );
 
   private async ensureFile() {
     await mkdir(dirname(this.settingsPath), { recursive: true });
@@ -36,7 +40,11 @@ export class GeneralSettingsService {
     try {
       await readFile(this.settingsPath, 'utf-8');
     } catch {
-      await writeFile(this.settingsPath, JSON.stringify(DEFAULT_SETTINGS, null, 2), 'utf-8');
+      await writeFile(
+        this.settingsPath,
+        JSON.stringify(DEFAULT_SETTINGS, null, 2),
+        'utf-8',
+      );
     }
   }
 

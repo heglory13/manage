@@ -74,7 +74,9 @@ describe('SkuComboService - Unit Tests', () => {
     });
 
     it('should throw NotFoundException for missing classification', async () => {
-      (prisma.classification as Record<string, jest.Mock>).findUnique.mockResolvedValue(null);
+      (
+        prisma.classification as Record<string, jest.Mock>
+      ).findUnique.mockResolvedValue(null);
 
       await expect(
         service.create({
@@ -87,7 +89,9 @@ describe('SkuComboService - Unit Tests', () => {
     });
 
     it('should throw ConflictException for duplicate combo', async () => {
-      (prisma.skuCombo as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+      (
+        prisma.skuCombo as Record<string, jest.Mock>
+      ).findUnique.mockResolvedValue({
         id: 'existing',
       });
 
@@ -104,7 +108,9 @@ describe('SkuComboService - Unit Tests', () => {
 
   describe('getAll', () => {
     it('should return paginated results', async () => {
-      (prisma.skuCombo as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
+      (prisma.skuCombo as Record<string, jest.Mock>).findMany.mockResolvedValue(
+        [],
+      );
       (prisma.skuCombo as Record<string, jest.Mock>).count.mockResolvedValue(0);
 
       const result = await service.getAll({ page: '1', limit: '10' });
@@ -121,7 +127,8 @@ describe('SkuComboService - Unit Tests', () => {
     it('should apply search filter', async () => {
       await service.getAll({ search: 'Oversize' });
 
-      const call = (prisma.skuCombo as Record<string, jest.Mock>).findMany.mock.calls[0][0];
+      const call = (prisma.skuCombo as Record<string, jest.Mock>).findMany.mock
+        .calls[0][0];
       expect(call.where.OR).toBeDefined();
       expect(call.where.OR).toHaveLength(5);
     });

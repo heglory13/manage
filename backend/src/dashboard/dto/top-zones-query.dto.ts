@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class TopZonesQueryDto {
   @IsOptional()
@@ -9,4 +9,8 @@ export class TopZonesQueryDto {
   @IsInt()
   @Min(1)
   limit?: number;
+
+  @IsOptional()
+  @IsString()
+  warehouseTypeId?: string;
 }

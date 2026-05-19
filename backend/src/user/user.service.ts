@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -21,7 +22,9 @@ export class UserService {
     };
   }
 
-  async create(dto: CreateUserDto): Promise<ReturnType<UserService['sanitizeUser']>> {
+  async create(
+    dto: CreateUserDto,
+  ): Promise<ReturnType<UserService['sanitizeUser']>> {
     const hashedPassword = await bcrypt.hash(dto.password, 10);
     const user = await this.prisma.user.create({
       data: {
@@ -35,7 +38,10 @@ export class UserService {
     return this.sanitizeUser(user);
   }
 
-  async updateRole(id: string, role: Role): Promise<ReturnType<UserService['sanitizeUser']>> {
+  async updateRole(
+    id: string,
+    role: Role,
+  ): Promise<ReturnType<UserService['sanitizeUser']>> {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
       throw new NotFoundException('User not found');
@@ -69,23 +75,36 @@ export class UserService {
     return this.sanitizeUser(updated);
   }
 
-  async delete(id: string, currentUserId: string): Promise<void> {
+  async delete(
+    id: string,
+    currentUserId: string,
+    callerRole: Role,
+  ): Promise<void> {
     if (id === currentUserId) {
       throw new BadRequestException(
-        'Admin không thể tự xóa tài khoản của chính mình',
+        'Không thể tự xóa tài khoản của chính mình',
       );
     }
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    const [transactionCount, stocktakingCount, preliminaryCheckCount, orderPlanCount] =
-      await this.prisma.$transaction([
-        this.prisma.inventoryTransaction.count({ where: { userId: id } }),
-        this.prisma.stocktakingRecord.count({ where: { createdBy: id } }),
-        this.prisma.preliminaryCheck.count({ where: { createdBy: id } }),
-        this.prisma.orderPlan.count({ where: { createdBy: id } }),
-      ]);
+    if (callerRole === Role.MANAGER && user.role !== Role.STAFF) {
+      throw new ForbiddenException(
+        'Quản lý chỉ có thể xóa tài khoản nhân viên',
+      );
+    }
+    const [
+      transactionCount,
+      stocktakingCount,
+      preliminaryCheckCount,
+      orderPlanCount,
+    ] = await this.prisma.$transaction([
+      this.prisma.inventoryTransaction.count({ where: { userId: id } }),
+      this.prisma.stocktakingRecord.count({ where: { createdBy: id } }),
+      this.prisma.preliminaryCheck.count({ where: { createdBy: id } }),
+      this.prisma.orderPlan.count({ where: { createdBy: id } }),
+    ]);
 
     if (
       transactionCount > 0 ||
@@ -94,7 +113,7 @@ export class UserService {
       orderPlanCount > 0
     ) {
       throw new BadRequestException(
-        'KhÃ´ng thá»ƒ xÃ³a tÃ i khoáº£n nÃ y vÃ¬ cÃ²n dá»¯ liá»‡u nghiá»‡p vá»¥ liÃªn quan',
+        'Không thể xóa tài khoản này vì còn dữ liệu nghiệp vụ liên quan',
       );
     }
 
@@ -119,5 +138,17 @@ export class UserService {
   async getSafeById(id: string) {
     const user = await this.findById(id);
     return user ? this.sanitizeUser(user) : null;
+  }
+
+  async changePassword(id: string, newPassword: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      throw new NotFoundException('Người dùng không tồn tại');
+    }
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({
+      where: { id },
+      data: { password: hashedPassword },
+    });
   }
 }

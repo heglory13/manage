@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Eye, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
 import { api } from '../services/api';
 import { Button } from '../components/ui/button';
@@ -9,7 +10,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { compressImageForUpload } from '../lib/image';
-import { formatNumber } from '../lib/utils';
+import { formatNumber, matchSel } from '../lib/utils';
 import SmartFilter, { type FilterField } from '../components/common/SmartFilter';
 import { useSavedFilters } from '../hooks/useSavedFilters';
 import { SearchableSelect } from '../components/ui/searchable-select';
@@ -38,8 +39,8 @@ type PreliminaryCheckForm = {
   categoryId: string;
   quantity: number;
   warehouseTypeId: string;
-  imageFile: File | null;
-  imagePreview: string;
+  imageFiles: File[];
+  imagePreviews: string[];   // blob: for new files, real URL for existing
   note: string;
 };
 
@@ -47,10 +48,18 @@ const defaultPreliminaryForm = (): PreliminaryCheckForm => ({
   categoryId: '',
   quantity: 1,
   warehouseTypeId: '',
-  imageFile: null,
-  imagePreview: '',
+  imageFiles: [],
+  imagePreviews: [],
   note: '',
 });
+
+function parseImageUrls(imageUrl?: string | null): string[] {
+  if (!imageUrl) return [];
+  if (imageUrl.startsWith('[')) {
+    try { return JSON.parse(imageUrl) as string[]; } catch { return [imageUrl]; }
+  }
+  return [imageUrl];
+}
 
 function formatDateTime(value?: string | null) {
   if (!value) return '-';
@@ -64,12 +73,20 @@ function formatDateTime(value?: string | null) {
 }
 
 export default function PreliminaryChecksPage() {
+  const { user } = useAuth();
+  const canCreate = Boolean(user?.permissions?.preliminaryChecks?.create);
+  const canEdit = Boolean(user?.permissions?.preliminaryChecks?.edit);
+  const canDelete = Boolean(user?.permissions?.preliminaryChecks?.delete);
+  const canSave = Boolean(user?.permissions?.preliminaryChecks?.save);
   const [categories, setCategories] = useState<AttributeOption[]>([]);
   const [warehouseTypes, setWarehouseTypes] = useState<AttributeOption[]>([]);
   const [rows, setRows] = useState<PreliminaryCheckRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [pcPage, setPcPage] = useState(1);
+  const [pcPageSize, setPcPageSize] = useState(50);
+  const [pcTotal, setPcTotal] = useState(0);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [previewImageUrl, setPreviewImageUrl] = useState('');
+  const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [editingRow, setEditingRow] = useState<PreliminaryCheckRow | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState<PreliminaryCheckForm>(defaultPreliminaryForm);
@@ -78,7 +95,8 @@ export default function PreliminaryChecksPage() {
 
   const savedFilterHook = useSavedFilters({ pageKey: 'preliminary-checks' });
 
-  const filterFields = useMemo<FilterField[]>(() => [
+  const filterFields = useMemo<FilterField[]>(() => {
+    return [
     {
       key: 'status',
       label: 'Trạng thái',
@@ -92,7 +110,12 @@ export default function PreliminaryChecksPage() {
       key: 'category',
       label: 'Danh mục SP',
       type: 'select',
-      options: categories.map((c) => ({ value: c.id, label: c.name })),
+      placeholder: 'Gõ để tìm danh mục...',
+      asyncLoad: async () => {
+        const res = await api.get('/categories');
+        const items = res.data.data || res.data || [];
+        return items.map((c: any) => ({ value: c.id, label: c.name }));
+      },
     },
     {
       key: 'quantity',
@@ -104,27 +127,43 @@ export default function PreliminaryChecksPage() {
       key: 'creator',
       label: 'Người tạo',
       type: 'text',
-      placeholder: 'Lọc người tạo...',
+      placeholder: 'Gõ để tìm người tạo...',
+      asyncLoad: async () => {
+        const res = await api.get('/users');
+        const items = res.data.data || res.data || [];
+        return items.map((u: any) => ({ value: u.name, label: u.name }));
+      },
     },
     {
-      key: 'date',
-      label: 'Ngày tạo',
+      key: 'dateFrom',
+      label: 'Từ ngày',
       type: 'date',
     },
-  ], [categories]);
+    {
+      key: 'dateTo',
+      label: 'Đến ngày',
+      type: 'date',
+    },
+    ];
+  }, []);
 
   const filteredRows = useMemo(() => {
     const f = savedFilterHook.filters;
     if (Object.keys(f).length === 0) return rows;
 
     return rows.filter((item) => {
-      if (f.status && item.status !== f.status) return false;
-      if (f.category && item.category?.id !== f.category) return false;
+      if (!matchSel(f.status, item.status)) return false;
+      if (!matchSel(f.category, item.category?.id)) return false;
       if (f.quantity && !String(item.quantity).includes(String(f.quantity))) return false;
       if (f.creator && !item.creator?.name?.toLowerCase().includes(String(f.creator).toLowerCase())) return false;
-      if (f.date) {
-        const itemDate = new Date(item.createdAt).toISOString().slice(0, 10);
-        if (itemDate !== f.date) return false;
+      if (f.dateFrom) {
+        const from = new Date(f.dateFrom as string);
+        if (new Date(item.createdAt) < from) return false;
+      }
+      if (f.dateTo) {
+        const to = new Date(f.dateTo as string);
+        to.setHours(23, 59, 59, 999);
+        if (new Date(item.createdAt) > to) return false;
       }
       return true;
     });
@@ -136,18 +175,20 @@ export default function PreliminaryChecksPage() {
     setWarehouseTypes(res.data.warehouseTypes || []);
   }, []);
 
-  const fetchRows = useCallback(async () => {
+  const fetchRows = useCallback(async (page = pcPage) => {
     setIsLoading(true);
     try {
-      const res = await api.get('/preliminary-checks', { params: { limit: 100 } });
+      const res = await api.get('/preliminary-checks', { params: { limit: pcPageSize, page } });
       setRows(res.data.data || []);
+      setPcTotal(res.data.total || 0);
+      setPcPage(page);
     } catch (error) {
       console.error('Error fetching preliminary checks:', error);
       setRows([]);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [pcPageSize, pcPage]);
 
   useEffect(() => {
     void fetchMetadata();
@@ -156,11 +197,11 @@ export default function PreliminaryChecksPage() {
 
   useEffect(() => {
     return () => {
-      if (form.imagePreview?.startsWith('blob:')) {
-        URL.revokeObjectURL(form.imagePreview);
-      }
+      form.imagePreviews.forEach((p) => {
+        if (p.startsWith('blob:')) URL.revokeObjectURL(p);
+      });
     };
-  }, [form.imagePreview]);
+  }, [form.imagePreviews]);
 
   const resetForm = useCallback(() => {
     setForm(defaultPreliminaryForm());
@@ -192,30 +233,41 @@ export default function PreliminaryChecksPage() {
       categoryId: row.category?.id || '',
       quantity: row.quantity,
       warehouseTypeId: row.warehouseType?.id || '',
-      imageFile: null,
-      imagePreview: row.imageUrl || '',
+      imageFiles: [],
+      imagePreviews: parseImageUrls(row.imageUrl),
       note: row.note || '',
     });
     setShowCreateModal(true);
   };
 
-  const handleImageSelect = (file?: File | null) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('Vui long chon file hinh anh.');
-      return;
-    }
-
-    if (form.imagePreview?.startsWith('blob:')) {
-      URL.revokeObjectURL(form.imagePreview);
-    }
-
-    const preview = URL.createObjectURL(file);
+  const handleImagesAdd = (files: FileList | null) => {
+    if (!files) return;
+    const valid = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (!valid.length) return;
+    const newPreviews = valid.map((f) => URL.createObjectURL(f));
     setForm((prev) => ({
       ...prev,
-      imageFile: file,
-      imagePreview: preview,
+      imageFiles: [...prev.imageFiles, ...valid],
+      imagePreviews: [...prev.imagePreviews, ...newPreviews],
     }));
+  };
+
+  const handleImageRemove = (index: number) => {
+    setForm((prev) => {
+      const preview = prev.imagePreviews[index];
+      if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview);
+      // find corresponding file index (blob previews come after existing URL previews)
+      const existingCount = prev.imagePreviews.filter((p) => !p.startsWith('blob:')).length;
+      const fileIndex = index - existingCount;
+      const newFiles = fileIndex >= 0
+        ? prev.imageFiles.filter((_, i) => i !== fileIndex)
+        : prev.imageFiles;
+      return {
+        ...prev,
+        imageFiles: newFiles,
+        imagePreviews: prev.imagePreviews.filter((_, i) => i !== index),
+      };
+    });
   };
 
   const canSubmit = useMemo(
@@ -235,15 +287,21 @@ export default function PreliminaryChecksPage() {
         note: form.note.trim() || undefined,
       };
 
-      if (form.imageFile) {
-        const body = new FormData();
-        body.append('file', await compressImageForUpload(form.imageFile));
-        const uploadRes = await api.post('/upload', body, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
-        payload.imageUrl = uploadRes.data.url;
-      } else if (editingRow?.imageUrl) {
-        payload.imageUrl = editingRow.imageUrl;
+      // Upload new files in parallel
+      const newUrls: string[] = await Promise.all(
+        form.imageFiles.map(async (file) => {
+          const compressed = await compressImageForUpload(file);
+          const body = new FormData();
+          body.append('file', compressed);
+          const res = await api.post('/upload', body, { headers: { 'Content-Type': 'multipart/form-data' } });
+          return res.data.url as string;
+        }),
+      );
+      // Existing URLs (non-blob previews kept by user)
+      const existingUrls = form.imagePreviews.filter((p) => !p.startsWith('blob:'));
+      const allUrls = [...existingUrls, ...newUrls];
+      if (allUrls.length > 0) {
+        payload.imageUrls = allUrls;
       }
 
       if (editingRow) {
@@ -286,7 +344,7 @@ export default function PreliminaryChecksPage() {
             </p>
           </div>
 
-          <Button className="h-11 rounded-2xl bg-violet-600 px-5 hover:bg-violet-700" onClick={openCreateModal}>
+          <Button className="h-11 rounded-2xl bg-violet-600 px-5 hover:bg-violet-700" onClick={openCreateModal} disabled={!canCreate}>
             <Plus size={16} />
             Tao phieu kiem so bo
           </Button>
@@ -295,11 +353,14 @@ export default function PreliminaryChecksPage() {
         <SmartFilter
           fields={filterFields}
           filters={savedFilterHook.filters}
+          draftFilters={savedFilterHook.draftFilters}
           savedFilters={savedFilterHook.savedFilters}
           activeFilterId={savedFilterHook.activeFilterId}
+          hasPendingChanges={savedFilterHook.hasPendingChanges}
           onUpdateFilter={savedFilterHook.updateFilter}
           onRemoveFilter={savedFilterHook.removeFilter}
           onClearFilters={savedFilterHook.clearFilters}
+          onApplyDraftFilters={savedFilterHook.applyDraftFilters}
           onApplyFilter={savedFilterHook.applyFilter}
           onSaveFilter={savedFilterHook.saveFilter}
           onDeleteFilter={savedFilterHook.deleteFilter}
@@ -315,7 +376,7 @@ export default function PreliminaryChecksPage() {
               <div className="py-14 text-center text-slate-500">Chua co phieu kiem so bo nao.</div>
             ) : (
               <>
-                <div className="hidden lg:block">
+                <div className="hidden lg:block overflow-x-auto">
                   <Table className="border-none">
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
@@ -342,31 +403,33 @@ export default function PreliminaryChecksPage() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            {item.imageUrl ? (
-                              <button className="text-sm font-medium text-violet-700 hover:text-violet-800" onClick={() => setPreviewImageUrl(item.imageUrl || '')}>
-                                Xem hinh
+                            {parseImageUrls(item.imageUrl).length > 0 ? (
+                              <button className="text-sm font-medium text-violet-700 hover:text-violet-800" onClick={() => setPreviewImages(parseImageUrls(item.imageUrl))}>
+                                {parseImageUrls(item.imageUrl).length} anh
                               </button>
                             ) : (
                               <span className="text-sm text-slate-400">Khong co</span>
                             )}
                           </TableCell>
-                          <TableCell className="max-w-[280px] text-[15px] text-slate-500 whitespace-normal break-words">{item.note || '-'}</TableCell>
+                          <TableCell className="max-w-[150px] md:max-w-[280px] text-[15px] text-slate-500 whitespace-normal break-words">{item.note || '-'}</TableCell>
                           <TableCell className="pr-4">
                             <div className="flex justify-end gap-2">
-                              {item.imageUrl && (
-                                <Button variant="outline" size="sm" onClick={() => setPreviewImageUrl(item.imageUrl || '')}>
+                              {parseImageUrls(item.imageUrl).length > 0 && (
+                                <Button variant="outline" size="sm" onClick={() => setPreviewImages(parseImageUrls(item.imageUrl))}>
                                   <Eye size={14} />
-                                  Xem
+                                  Xem ({parseImageUrls(item.imageUrl).length})
                                 </Button>
                               )}
-                              <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
+                              <Button variant="outline" size="sm" onClick={() => openEditModal(item)} disabled={!canEdit}>
                                 <Pencil size={14} />
                                 Sua
                               </Button>
-                              <Button variant="outline" size="sm" onClick={() => handleDelete(item)}>
-                                <Trash2 size={14} />
-                                Xoa
-                              </Button>
+                              {canDelete && (
+                                <Button variant="outline" size="sm" onClick={() => handleDelete(item)}>
+                                  <Trash2 size={14} />
+                                  Xoa
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -405,10 +468,10 @@ export default function PreliminaryChecksPage() {
                       </div>
 
                       <div className="mt-4 flex flex-wrap gap-2">
-                        {item.imageUrl && (
-                          <Button variant="outline" size="sm" onClick={() => setPreviewImageUrl(item.imageUrl || '')}>
+                        {parseImageUrls(item.imageUrl).length > 0 && (
+                          <Button variant="outline" size="sm" onClick={() => setPreviewImages(parseImageUrls(item.imageUrl))}>
                             <Eye size={14} />
-                            Xem hinh
+                            Xem anh ({parseImageUrls(item.imageUrl).length})
                           </Button>
                         )}
                         <Button variant="outline" size="sm" onClick={() => openEditModal(item)}>
@@ -425,6 +488,35 @@ export default function PreliminaryChecksPage() {
                 </div>
               </>
             )}
+
+            {/* Pagination */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <span>Hiển thị</span>
+                <select
+                  className="form-select page-size-select h-9 w-20 text-sm"
+                  value={pcPageSize}
+                  onChange={(e) => { setPcPageSize(Number(e.target.value)); setPcPage(1); }}
+                >
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                </select>
+                <span>/ trang • Tổng {pcTotal} mục</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" disabled={pcPage <= 1} onClick={() => fetchRows(pcPage - 1)}>
+                  Trước
+                </Button>
+                <span className="px-3 text-sm font-medium text-slate-700">
+                  Trang {pcPage} / {Math.ceil(pcTotal / pcPageSize) || 1}
+                </span>
+                <Button variant="outline" size="sm" disabled={pcPage >= Math.ceil(pcTotal / pcPageSize)} onClick={() => fetchRows(pcPage + 1)}>
+                  Sau
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -446,7 +538,7 @@ export default function PreliminaryChecksPage() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Danh muc san pham da nhan</Label>
               <SearchableSelect
@@ -473,20 +565,35 @@ export default function PreliminaryChecksPage() {
             </div>
 
             <div className="space-y-2 md:col-span-2">
-              <Label>Hinh anh hang da nhan</Label>
-              <label className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/70 px-4 py-6 text-center">
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageSelect(e.target.files?.[0])} />
-                {form.imagePreview ? (
-                  <div className="space-y-3">
-                    <img src={form.imagePreview} alt="preview" className="mx-auto max-h-[220px] rounded-xl object-contain" />
-                    <p className="text-sm text-slate-500">Nhan de doi hinh khac</p>
-                  </div>
-                ) : (
-                  <>
-                    <Upload size={28} className="text-slate-400" />
-                    <p className="mt-3 text-sm text-slate-500">Nhan de tai len hinh anh da nhan</p>
-                  </>
-                )}
+              <div className="flex items-center justify-between">
+                <Label>Hinh anh hang da nhan</Label>
+                <span className="text-xs text-slate-400">{form.imagePreviews.length > 0 ? `${form.imagePreviews.length} anh` : 'Chua co anh'}</span>
+              </div>
+
+              {form.imagePreviews.length > 0 && (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {form.imagePreviews.map((src, idx) => (
+                    <div key={idx} className="relative group aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                      <img src={src} alt={`anh-${idx + 1}`} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => handleImageRemove(idx)}
+                        className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition"
+                        title="Xoa anh"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/70 px-4 py-4 text-center hover:border-violet-300 hover:bg-violet-50/40 transition">
+                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleImagesAdd(e.target.files)} />
+                <Upload size={18} className="text-slate-400" />
+                <span className="text-sm text-slate-500">
+                  {form.imagePreviews.length > 0 ? 'Them anh khac' : 'Nhan de tai len hinh anh (co the chon nhieu anh)'}
+                </span>
               </label>
             </div>
 
@@ -505,23 +612,26 @@ export default function PreliminaryChecksPage() {
             <Button type="button" variant="outline" onClick={() => setShowCreateModal(false)}>
               Huy
             </Button>
-            <Button type="button" onClick={submit} disabled={!canSubmit || isSubmitting}>
+            <Button type="button" onClick={submit} disabled={!canSubmit || isSubmitting || (isEditing ? !canSave : !canCreate)}>
               {isSubmitting ? 'Dang luu...' : isEditing ? 'Luu cap nhat' : 'Tao phieu so bo'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(previewImageUrl)} onOpenChange={(open) => !open && setPreviewImageUrl('')}>
+      <Dialog open={previewImages.length > 0} onOpenChange={(open) => !open && setPreviewImages([])}>
         <DialogContent className="max-w-4xl p-3 sm:p-5">
           <DialogHeader>
-            <DialogTitle>Xem hinh anh da upload</DialogTitle>
+            <DialogTitle>Hinh anh ({previewImages.length} anh)</DialogTitle>
           </DialogHeader>
-          {previewImageUrl && (
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-2">
-              <img src={previewImageUrl} alt="preview" className="max-h-[75vh] w-full rounded-xl object-contain" />
-            </div>
-          )}
+          <div className={`grid gap-3 ${previewImages.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+            {previewImages.map((url, idx) => (
+              <div key={idx} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                <img src={url} alt={`anh-${idx + 1}`} className="max-h-[60vh] w-full object-contain" />
+                <p className="py-1 text-center text-xs text-slate-400">Anh {idx + 1}/{previewImages.length}</p>
+              </div>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </AppLayout>

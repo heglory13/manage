@@ -1,24 +1,26 @@
 import {
   IsArray,
   IsDateString,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
   Min,
   ValidateNested,
 } from 'class-validator';
+
 import { Type } from 'class-transformer';
 
 export class StockInBatchItemDto {
   @IsString()
   categoryId!: string;
 
-  @IsNumber()
+  @IsInt({ message: 'So luong phai la so nguyen' })
   @Min(1, { message: 'So luong nhap kho phai lon hon 0' })
   quantity!: number;
 
   @IsNumber()
-  @Min(1, { message: 'Gia nhap phai lon hon 0' })
+  @Min(0, { message: 'Gia nhap khong duoc am' })
   purchasePrice!: number;
 
   @IsOptional()
@@ -36,6 +38,10 @@ export class StockInBatchItemDto {
 
   @IsOptional()
   @IsString()
+  warehouseTypeId?: string;
+
+  @IsOptional()
+  @IsString()
   warehousePositionId?: string;
 
   @IsOptional()
@@ -49,6 +55,11 @@ export class StockInBatchItemDto {
   @IsOptional()
   @IsString()
   skuComboId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  imageUrls?: string[];
 }
 
 export class StockInBatchDto {

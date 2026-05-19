@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { OrderPlanStatus, OrderPlanType } from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -51,11 +55,15 @@ export class OrderPlanService {
     }
 
     if (!dto.customerName?.trim()) {
-      throw new BadRequestException('Vui long nhap ten khach hang cho don pre-order');
+      throw new BadRequestException(
+        'Vui long nhap ten khach hang cho don pre-order',
+      );
     }
 
     if (!dto.customerPhone?.trim()) {
-      throw new BadRequestException('Vui long nhap so dien thoai khach hang cho don pre-order');
+      throw new BadRequestException(
+        'Vui long nhap so dien thoai khach hang cho don pre-order',
+      );
     }
   }
 
@@ -80,8 +88,14 @@ export class OrderPlanService {
         categoryId: dto.categoryId,
         warehouseTypeId: dto.warehouseTypeId || null,
         quantity: dto.quantity,
-        customerName: dto.type === OrderPlanType.PREORDER ? dto.customerName?.trim() || null : null,
-        customerPhone: dto.type === OrderPlanType.PREORDER ? dto.customerPhone?.trim() || null : null,
+        customerName:
+          dto.type === OrderPlanType.PREORDER
+            ? dto.customerName?.trim() || null
+            : null,
+        customerPhone:
+          dto.type === OrderPlanType.PREORDER
+            ? dto.customerPhone?.trim() || null
+            : null,
         note: dto.note?.trim() || null,
         createdBy: userId,
       },
@@ -142,15 +156,21 @@ export class OrderPlanService {
     }
 
     if (userRole !== 'ADMIN' && existing.status !== OrderPlanStatus.PLANNED) {
-      throw new BadRequestException('Chi co the sua ke hoach khi chua xac nhan dat hang');
+      throw new BadRequestException(
+        'Chi co the sua ke hoach khi chua xac nhan dat hang',
+      );
     }
 
     const nextType = dto.type ?? existing.type;
     const nextCategoryId = dto.categoryId ?? existing.categoryId ?? undefined;
     const nextWarehouseTypeId =
-      dto.warehouseTypeId === '' ? undefined : dto.warehouseTypeId ?? existing.warehouseTypeId ?? undefined;
-    const nextCustomerName = dto.customerName ?? existing.customerName ?? undefined;
-    const nextCustomerPhone = dto.customerPhone ?? existing.customerPhone ?? undefined;
+      dto.warehouseTypeId === ''
+        ? undefined
+        : (dto.warehouseTypeId ?? existing.warehouseTypeId ?? undefined);
+    const nextCustomerName =
+      dto.customerName ?? existing.customerName ?? undefined;
+    const nextCustomerPhone =
+      dto.customerPhone ?? existing.customerPhone ?? undefined;
 
     await this.validateReferenceData({
       type: nextType,
@@ -169,24 +189,37 @@ export class OrderPlanService {
       data: {
         type: nextType,
         categoryId: nextCategoryId,
-        warehouseTypeId: dto.warehouseTypeId === '' ? null : nextWarehouseTypeId ?? null,
+        warehouseTypeId:
+          dto.warehouseTypeId === '' ? null : (nextWarehouseTypeId ?? null),
         quantity: dto.quantity ?? existing.quantity,
-        customerName: nextType === OrderPlanType.PREORDER ? nextCustomerName?.trim() || null : null,
-        customerPhone: nextType === OrderPlanType.PREORDER ? nextCustomerPhone?.trim() || null : null,
+        customerName:
+          nextType === OrderPlanType.PREORDER
+            ? nextCustomerName?.trim() || null
+            : null,
+        customerPhone:
+          nextType === OrderPlanType.PREORDER
+            ? nextCustomerPhone?.trim() || null
+            : null,
         note: dto.note !== undefined ? dto.note.trim() || null : existing.note,
       },
       include: this.buildInclude(),
     });
   }
 
-  async confirmOrdered(id: string, expectedArrivalDate: string, userRole?: string) {
+  async confirmOrdered(
+    id: string,
+    expectedArrivalDate: string,
+    userRole?: string,
+  ) {
     const existing = await this.prisma.orderPlan.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Ke hoach dat hang khong ton tai');
     }
 
     if (userRole !== 'ADMIN' && existing.status !== OrderPlanStatus.PLANNED) {
-      throw new BadRequestException('Ke hoach nay da duoc xac nhan dat hang truoc do');
+      throw new BadRequestException(
+        'Ke hoach nay da duoc xac nhan dat hang truoc do',
+      );
     }
 
     return this.prisma.orderPlan.update({
@@ -206,7 +239,9 @@ export class OrderPlanService {
     }
 
     if (userRole !== 'ADMIN' && existing.status !== OrderPlanStatus.PLANNED) {
-      throw new BadRequestException('Chi co the xoa ke hoach khi chua xac nhan dat hang');
+      throw new BadRequestException(
+        'Chi co the xoa ke hoach khi chua xac nhan dat hang',
+      );
     }
 
     await this.prisma.orderPlan.delete({ where: { id } });

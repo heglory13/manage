@@ -1,4 +1,10 @@
-import { IsDateString, IsInt, IsOptional, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class DetailQueryDto {
   @IsOptional()
@@ -18,4 +24,8 @@ export class DetailQueryDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @IsOptional()
+  @IsString()
+  warehouseTypeId?: string;
 }

@@ -38,8 +38,39 @@ export async function updateGeneralSettings(payload: Partial<GeneralSettings>) {
 }
 
 export async function downloadDatabaseBackup() {
-  const response = await api.get('/backup/database', {
+  const response = await api.get('/backup/full', {
     responseType: 'blob',
   });
   return response.data as Blob;
+}
+
+export type SkuAdminResult = {
+  id: string;
+  compositeSku: string;
+  categoryName: string | null;
+  stock: number;
+};
+
+export async function searchSkusForAdmin(q: string): Promise<SkuAdminResult[]> {
+  const response = await api.get('/backup/sku-search', { params: { q } });
+  return response.data as SkuAdminResult[];
+}
+
+export async function deleteSkuData(skuComboIds: string[]): Promise<{ message: string; deletedTransactions: number }> {
+  const response = await api.post('/backup/delete-sku-data', { skuComboIds });
+  return response.data as { message: string; deletedTransactions: number };
+}
+
+export async function resetTestData(): Promise<{ message: string; deleted: Record<string, number> }> {
+  const response = await api.post('/backup/reset-test-data', { confirm: 'XOA DU LIEU' });
+  return response.data as { message: string; deleted: Record<string, number> };
+}
+
+export async function restoreFilesFromBackup(zipFile: File): Promise<{ message: string; restored: string[] }> {
+  const formData = new FormData();
+  formData.append('file', zipFile);
+  const response = await api.post('/backup/restore-files', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data as { message: string; restored: string[] };
 }

@@ -1,10 +1,11 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, CheckCircle2, Clock3, Eye, History, Plus, Printer, RefreshCcw, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import AppLayout from '../components/layout/AppLayout';
 import { api } from '../services/api';
 import { compressImageForUpload } from '../lib/image';
-import { formatDateTime, formatNumber } from '../lib/utils';
+import { formatDateTime, formatNumber, matchSel } from '../lib/utils';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -27,6 +28,8 @@ type StocktakingItem = {
   discrepancy: number;
   discrepancyReason?: string;
   evidenceUrl?: string;
+  isBalanced?: boolean;
+  balancedAt?: string;
   product?: {
     id: string;
     name: string;
@@ -55,19 +58,6 @@ type StocktakingRecord = {
     changedAt: string;
     note?: string;
   }>;
-};
-
-type PositionOption = {
-  id: string;
-  label: string;
-};
-
-type AdjustmentForm = {
-  categoryId: string;
-  warehousePositionId: string;
-  quantity: number;
-  type: 'INCREASE' | 'DECREASE';
-  reason: string;
 };
 
 const STATUS_LABELS: Record<StocktakingStatus, string> = {
@@ -113,19 +103,28 @@ function getStocktakingItemCategoryId(item: StocktakingItem) {
 }
 
 export default function StocktakingPage() {
+  const { user } = useAuth();
+  const canCreate = Boolean(user?.permissions?.audit?.create);
+  const canSave = Boolean(user?.permissions?.audit?.save);
   const [records, setRecords] = useState<StocktakingRecord[]>([]);
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
   const [warehouseTypes, setWarehouseTypes] = useState<Array<{ id: string; name: string }>>([]);
-  const [positions, setPositions] = useState<PositionOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
   const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const [showItemBalanceModal, setShowItemBalanceModal] = useState(false);
+  const [balancingItem, setBalancingItem] = useState<StocktakingItem | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<StocktakingRecord | null>(null);
   const [createMode, setCreateMode] = useState<'full' | 'category' | 'warehouseType' | 'product'>('category');
-  const [cutoffDate, setCutoffDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [cutoffDate, setCutoffDate] = useState(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  });
   const [cutoffTime, setCutoffTime] = useState(() => new Date().toTimeString().slice(0, 5));
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [selectedWarehouseTypeId, setSelectedWarehouseTypeId] = useState('');
@@ -154,17 +153,10 @@ export default function StocktakingPage() {
   const [stocktakingSearchOpen, setStocktakingSearchOpen] = useState(false);
   const [stocktakingSelectedProduct, setStocktakingSelectedProduct] = useState('');
   const [isSubmittingConfirmation, setIsSubmittingConfirmation] = useState(false);
-  const [signedDocument, setSignedDocument] = useState<{ name: string; preview: string; url: string } | null>(null);
+  const [signedDocuments, setSignedDocuments] = useState<Array<{ name: string; preview: string; url: string }>>([]);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
   const [confirmForm, setConfirmForm] = useState<Record<string, { actualQuantity: number; discrepancyReason: string }>>({});
   const [generalSettings, setGeneralSettings] = useState(defaultGeneralSettings);
-  const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentForm>({
-    categoryId: '',
-    warehousePositionId: '',
-    quantity: 1,
-    type: 'DECREASE',
-    reason: '',
-  });
 
   const savedFilterHook = useSavedFilters({ pageKey: 'stocktaking' });
 
@@ -191,10 +183,48 @@ export default function StocktakingPage() {
       ],
     },
     {
+      key: 'productName',
+      label: 'Tên sản phẩm',
+      type: 'text',
+      placeholder: 'Chọn sản phẩm...',
+      asyncLoad: async (q?: string) => {
+        const res = await api.get('/products', { params: { limit: 100, search: q } });
+        const items = res.data.data || res.data || [];
+        return items.map((p: any) => ({ value: p.name, label: p.name }));
+      },
+    },
+    {
+      key: 'sku',
+      label: 'SKU',
+      type: 'text',
+      placeholder: 'Chọn SKU...',
+      asyncLoad: async (q?: string) => {
+        const res = await api.get('/input-declarations/sku-combos', { params: { limit: 100, search: q } });
+        const items = res.data.data || res.data || [];
+        return items.map((s: any) => ({ value: s.compositeSku, label: s.compositeSku }));
+      },
+    },
+    {
+      key: 'categoryName',
+      label: 'Danh mục',
+      type: 'text',
+      placeholder: 'Chọn danh mục...',
+      asyncLoad: async (q?: string) => {
+        const res = await api.get('/categories', { params: { limit: 100, search: q } });
+        const items = res.data.data || res.data || [];
+        return items.map((c: any) => ({ value: c.name, label: c.name }));
+      },
+    },
+    {
       key: 'creator',
       label: 'Nhân viên',
       type: 'text',
-      placeholder: 'Lọc nhân viên...',
+      placeholder: 'Gõ để tìm nhân viên...',
+      asyncLoad: async () => {
+        const res = await api.get('/users');
+        const items = res.data.data || res.data || [];
+        return items.map((u: any) => ({ value: u.name, label: u.name }));
+      },
     },
     {
       key: 'date',
@@ -208,13 +238,25 @@ export default function StocktakingPage() {
     if (Object.keys(f).length === 0) return records;
 
     return records.filter((record) => {
-      if (f.status && record.status !== f.status) return false;
-      if (f.mode && record.mode !== f.mode) return false;
+      if (!matchSel(f.status, record.status)) return false;
+      if (!matchSel(f.mode, record.mode)) return false;
       if (f.creator && !record.creator?.name?.toLowerCase().includes(String(f.creator).toLowerCase())) return false;
       if (f.date) {
         const recordDate = new Date(record.createdAt).toISOString().slice(0, 10);
         if (recordDate !== f.date) return false;
       }
+      
+      // Filter by product info (productName, sku, categoryName)
+      if (f.productName || f.sku || f.categoryName) {
+        const hasMatchingItem = record.items?.some((item) => {
+          if (f.productName && !item.product?.name?.toLowerCase().includes(String(f.productName).toLowerCase())) return false;
+          if (f.sku && !item.product?.sku?.toLowerCase().includes(String(f.sku).toLowerCase())) return false;
+          if (f.categoryName && !item.category?.name?.toLowerCase().includes(String(f.categoryName).toLowerCase())) return false;
+          return true;
+        });
+        if (!hasMatchingItem) return false;
+      }
+      
       return true;
     });
   }, [records, savedFilterHook.filters]);
@@ -233,22 +275,13 @@ export default function StocktakingPage() {
 
   const fetchMetadata = useCallback(async () => {
     try {
-      const [layoutRes, declarationRes, skuRes] = await Promise.all([
-        api.get('/warehouse/layout'),
+      const [declarationRes, skuRes] = await Promise.all([
         api.get('/input-declarations/all'),
         api.get('/input-declarations/sku-combos', { params: { limit: 500 } }),
       ]);
       setCategories(declarationRes.data.categories || []);
       setWarehouseTypes(declarationRes.data.warehouseTypes || []);
       setAllSkuCombos(skuRes.data.data || []);
-      setPositions(
-        (layoutRes.data?.positions || [])
-          .filter((position: any) => position.label)
-          .map((position: any) => ({
-            id: position.id,
-            label: position.label,
-          }))
-      );
     } catch (err) {
       console.error('Error fetching stocktaking metadata:', err);
     }
@@ -295,24 +328,7 @@ export default function StocktakingPage() {
     (createMode === 'category' && Boolean(selectedCategoryId)) ||
     (createMode === 'warehouseType' && Boolean(selectedWarehouseTypeId)) ||
     (createMode === 'product' && selectedSkuIds.size > 0);
-    (createMode === 'warehouseType' && Boolean(selectedWarehouseTypeId));
 
-  const openAdjustment = (item: StocktakingItem) => {
-    const categoryId = getStocktakingItemCategoryId(item);
-    if (!categoryId) {
-      alert('Không tìm thấy danh mục cho dòng kiểm kê này để điều chỉnh tồn kho.');
-      return;
-    }
-
-    setAdjustmentForm({
-      categoryId,
-      warehousePositionId: '',
-      quantity: Math.max(Math.abs(item.discrepancy) || 1, 1),
-      type: item.discrepancy >= 0 ? 'INCREASE' : 'DECREASE',
-      reason: item.discrepancyReason || 'Điều chỉnh từ kiểm kê định kỳ',
-    });
-    setShowAdjustmentModal(true);
-  };
 
   const openDetail = async (recordId: string) => {
     try {
@@ -354,7 +370,7 @@ export default function StocktakingPage() {
       setStocktakingSelectedProduct('');
       setStocktakingSearchResults([]);
       setStocktakingSearchOpen(false);
-      setCutoffDate(new Date().toISOString().slice(0, 10));
+      setCutoffDate((() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; })());
       setCutoffTime(new Date().toTimeString().slice(0, 5));
       await fetchRecords();
       await openDetail(created.id);
@@ -375,7 +391,7 @@ export default function StocktakingPage() {
         ])
       )
     );
-    setSignedDocument(null);
+    setSignedDocuments([]);
     setSelectedRecord(record);
     setShowDetailModal(false);
     setShowConfirmModal(true);
@@ -392,27 +408,55 @@ export default function StocktakingPage() {
     }));
   };
 
-  const handleSignedDocumentChange = async (file?: File) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('Vui lòng chọn file hình ảnh');
-      return;
+  const handleSignedDocumentsAdd = async (files: FileList | null) => {
+    if (!files) return;
+    const valid = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (!valid.length) return;
+
+    try {
+      const results = await Promise.all(
+        valid.map(async (file) => {
+          try {
+            const compressed = await compressImageForUpload(file);
+            const preview = URL.createObjectURL(compressed);
+            const formData = new FormData();
+            formData.append('file', compressed);
+            const uploadRes = await api.post('/upload', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            return { name: file.name, preview, url: uploadRes.data.url as string };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const succeeded = results.filter(Boolean) as { name: string; preview: string; url: string }[];
+      if (succeeded.length < valid.length) {
+        alert(`${valid.length - succeeded.length} ảnh tải lên thất bại. Vui lòng thử lại.`);
+      }
+      if (succeeded.length > 0) {
+        setSignedDocuments((prev) => [...prev, ...succeeded]);
+      }
+    } catch {
+      alert('Tải ảnh lên thất bại. Vui lòng thử lại.');
     }
+  };
 
-    const compressedFile = await compressImageForUpload(file);
-    const preview = URL.createObjectURL(compressedFile);
-    const formData = new FormData();
-    formData.append('file', compressedFile);
-    const uploadRes = await api.post('/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-
-    setSignedDocument({
-      name: file.name,
-      preview,
-      url: uploadRes.data.url,
+  const handleSignedDocumentRemove = (idx: number) => {
+    setSignedDocuments((prev) => {
+      const doc = prev[idx];
+      if (doc?.preview?.startsWith('blob:')) URL.revokeObjectURL(doc.preview);
+      return prev.filter((_, i) => i !== idx);
     });
   };
+
+  function parseEvidenceUrls(evidenceUrl?: string): string[] {
+    if (!evidenceUrl) return [];
+    if (evidenceUrl.startsWith('[')) {
+      try { return JSON.parse(evidenceUrl) as string[]; } catch { return [evidenceUrl]; }
+    }
+    return [evidenceUrl];
+  }
 
   const handleConfirmSubmit = async () => {
     if (!selectedRecord) return;
@@ -430,13 +474,13 @@ export default function StocktakingPage() {
           itemId: item.id,
           actualQuantity: Number(formValue.actualQuantity) || 0,
           discrepancyReason: formValue.discrepancyReason.trim() || undefined,
-          evidenceUrl: signedDocument?.url || undefined,
+          evidenceUrls: signedDocuments.length > 0 ? signedDocuments.map((d) => d.url) : undefined,
         };
       });
 
       await api.patch(`/stocktaking/${selectedRecord.id}/submit`, { items });
       setShowConfirmModal(false);
-      setSignedDocument(null);
+      setSignedDocuments([]);
       await fetchRecords();
       await openDetail(selectedRecord.id);
     } catch (err: any) {
@@ -446,32 +490,14 @@ export default function StocktakingPage() {
     }
   };
 
-  const handleAdjustmentSubmit = async () => {
-    try {
-      await api.post('/inventory/adjust', {
-        categoryId: adjustmentForm.categoryId,
-        warehousePositionId: adjustmentForm.warehousePositionId || undefined,
-        quantity: Number(adjustmentForm.quantity),
-        type: adjustmentForm.type,
-        reason: adjustmentForm.reason,
-      });
-
-      setShowAdjustmentModal(false);
-      setAdjustmentForm({
-        categoryId: '',
-        warehousePositionId: '',
-        quantity: 1,
-        type: 'DECREASE',
-        reason: '',
-      });
-
-      await fetchRecords();
-      if (selectedRecord) {
-        await openDetail(selectedRecord.id);
-      }
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Không thể điều chỉnh tồn kho từ biên bản kiểm kê');
-    }
+  const escapeHtml = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   };
 
   const handlePrint = (record: StocktakingRecord) => {
@@ -482,7 +508,7 @@ export default function StocktakingPage() {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Biên bản kiểm kê - ${record.id}</title>
+        <title>Biên bản kiểm kê - ${escapeHtml(record.id)}</title>
         <style>
           body { font-family: Arial, sans-serif; padding: 32px; color: #111827; }
           .wrap { max-width: 920px; margin: 0 auto; }
@@ -506,13 +532,13 @@ export default function StocktakingPage() {
         <div class="wrap">
           <div class="head">
             <div>
-              <div class="title">${generalSettings.storeName || generalSettings.brandName}</div>
-              <div class="sub">Địa chỉ: ${generalSettings.address || '-'}</div>
-              <div class="sub">Điện thoại: ${generalSettings.phone || '-'}</div>
+              <div class="title">${escapeHtml(generalSettings.storeName || generalSettings.brandName)}</div>
+              <div class="sub">Địa chỉ: ${escapeHtml(generalSettings.address) || '-'}</div>
+              <div class="sub">Điện thoại: ${escapeHtml(generalSettings.phone) || '-'}</div>
             </div>
             <div class="right">
               <div class="title">Biên bản kiểm kê</div>
-              <div class="sub">${formatAuditCode(record)}</div>
+              <div class="sub">${escapeHtml(formatAuditCode(record))}</div>
             </div>
           </div>
 
@@ -522,7 +548,7 @@ export default function StocktakingPage() {
             <div class="meta-left">
               <p><strong>Ngày tạo:</strong> ${formatDateTime(record.createdAt)}</p>
               <p><strong>Thời gian Cut-off:</strong> ${formatDateTime(record.cutoffTime)}</p>
-              <p><strong>Nhân viên:</strong> ${record.creator?.name || '-'}</p>
+              <p><strong>Nhân viên:</strong> ${escapeHtml(record.creator?.name) || '-'}</p>
             </div>
             <div class="meta-note">* Dữ liệu tồn kho được chốt tại thời điểm Cut-off.</div>
           </div>
@@ -548,12 +574,12 @@ export default function StocktakingPage() {
                   return `
                     <tr>
                       <td class="center">${index + 1}</td>
-                      <td><strong>${getStocktakingItemCode(item)}</strong></td>
-                      <td>${getStocktakingItemLabel(item)}</td>
+                      <td><strong>${escapeHtml(getStocktakingItemCode(item))}</strong></td>
+                      <td>${escapeHtml(getStocktakingItemLabel(item))}</td>
                       <td class="center"><strong>${item.systemQuantity}</strong></td>
-                      <td class="center">${actualValue}</td>
-                      <td class="center">${discrepancyValue}</td>
-                      <td>${noteValue}</td>
+                      <td class="center">${escapeHtml(actualValue)}</td>
+                      <td class="center">${escapeHtml(discrepancyValue)}</td>
+                      <td>${escapeHtml(noteValue)}</td>
                     </tr>
                   `;
                 })
@@ -615,7 +641,7 @@ export default function StocktakingPage() {
             <p className="text-[15px] text-slate-500 sm:text-[17px]">Quản lý biên bản kiểm kê, đối soát tồn kho thực tế và hệ thống.</p>
           </div>
 
-          <Button className="h-10 rounded-2xl bg-violet-600 px-4 hover:bg-violet-700 sm:h-11 sm:px-5" onClick={() => setShowCreateModal(true)}>
+          <Button className="h-10 rounded-2xl bg-violet-600 px-4 hover:bg-violet-700 sm:h-11 sm:px-5" onClick={() => setShowCreateModal(true)} disabled={!canCreate}>
             <Plus size={17} />
             Tạo biên bản kiểm kê
           </Button>
@@ -624,11 +650,14 @@ export default function StocktakingPage() {
         <SmartFilter
           fields={filterFields}
           filters={savedFilterHook.filters}
+          draftFilters={savedFilterHook.draftFilters}
           savedFilters={savedFilterHook.savedFilters}
           activeFilterId={savedFilterHook.activeFilterId}
+          hasPendingChanges={savedFilterHook.hasPendingChanges}
           onUpdateFilter={savedFilterHook.updateFilter}
           onRemoveFilter={savedFilterHook.removeFilter}
           onClearFilters={savedFilterHook.clearFilters}
+          onApplyDraftFilters={savedFilterHook.applyDraftFilters}
           onApplyFilter={savedFilterHook.applyFilter}
           onSaveFilter={savedFilterHook.saveFilter}
           onDeleteFilter={savedFilterHook.deleteFilter}
@@ -661,7 +690,16 @@ export default function StocktakingPage() {
                         </div>
 
                         <div>
-                          <div className="text-[16px] font-semibold text-slate-950 sm:text-[17px]">{record.id}</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[16px] font-semibold text-slate-950 sm:text-[17px]">{record.id}</span>
+                            {record.status !== 'CHECKING' && (
+                              record.items?.some((i) => i.discrepancy !== 0) ? (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Có chênh lệch</span>
+                              ) : (
+                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Không chênh lệch</span>
+                              )
+                            )}
+                          </div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-slate-500 sm:text-[14px]">
                             <span>Xuất: {formatDateTime(record.createdAt)}</span>
                             <span>|</span>
@@ -677,6 +715,7 @@ export default function StocktakingPage() {
                           <Button
                             className="h-10 rounded-2xl bg-violet-600 px-4 text-white shadow-sm hover:bg-violet-700"
                             onClick={() => openConfirmation(record)}
+                            disabled={!canSave}
                           >
                             <Check size={16} />
                             Xác nhận kiểm kê
@@ -702,7 +741,7 @@ export default function StocktakingPage() {
                             if (!confirm(`Xóa biên bản kiểm kê ${record.id}?`)) return;
                             try {
                               await api.delete(`/stocktaking/${record.id}`);
-                              fetchRecords();
+                              await fetchRecords();
                             } catch (err: any) {
                               alert(err.response?.data?.message || 'Không thể xóa biên bản');
                             }
@@ -756,14 +795,14 @@ export default function StocktakingPage() {
         </div>
       </div>
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
-        <DialogContent className="max-w-[720px] overflow-hidden rounded-[24px] p-0">
-          <DialogHeader className="border-b border-slate-200 px-5 py-4">
+        <DialogContent className="flex max-h-[92vh] max-w-[720px] flex-col overflow-hidden rounded-[24px] p-0">
+          <DialogHeader className="flex-shrink-0 border-b border-slate-200 px-5 py-4">
             <DialogTitle className="text-[18px] font-semibold text-slate-950">Tạo biên bản kiểm kê mới</DialogTitle>
             <p className="mt-1.5 text-[14px] text-slate-500">Chọn đúng phạm vi kiểm kê để hệ thống chốt số liệu tồn kho theo thời điểm cut-off.</p>
           </DialogHeader>
 
-          <div className="space-y-5 px-5 py-5">
-            <div className="grid gap-4 md:grid-cols-2">
+          <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Ngày cut-off</Label>
                 <Input type="date" value={cutoffDate} onChange={(e) => setCutoffDate(e.target.value)} />
@@ -776,7 +815,7 @@ export default function StocktakingPage() {
 
             <div className="space-y-3">
               <Label className="text-[16px] font-semibold text-slate-950">Phạm vi kiểm kê</Label>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <button
                   type="button"
                   onClick={() => setCreateMode('full')}
@@ -857,9 +896,13 @@ export default function StocktakingPage() {
                     allSkuCombos
                       .filter((combo) => {
                         if (!skuFilterQuery) return true;
-                        const q = skuFilterQuery.toLowerCase();
-                        const label = [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' ').toLowerCase();
-                        return label.includes(q) || combo.compositeSku.toLowerCase().includes(q);
+                        // Chuẩn hóa: bỏ dấu + lowercase để "nuoc tay" match được "nước tẩy"
+                        const norm = (s: string) =>
+                          s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+                        const label = norm([combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' '));
+                        const sku = combo.compositeSku.toLowerCase();
+                        const words = norm(skuFilterQuery).split(/\s+/).filter(Boolean);
+                        return words.every((word) => label.includes(word) || sku.includes(word));
                       })
                       .map((combo) => {
                         const label = [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' - ');
@@ -911,14 +954,14 @@ export default function StocktakingPage() {
             </div>
           </div>
 
-          <DialogFooter className="border-t border-slate-200 px-5 py-4">
+          <DialogFooter className="flex-shrink-0 border-t border-slate-200 px-5 py-4">
             <Button variant="outline" className="h-10 rounded-2xl px-4" onClick={() => setShowCreateModal(false)}>
               Hủy
             </Button>
             <Button
               className="h-10 rounded-2xl bg-violet-600 px-4 hover:bg-violet-700"
               onClick={handleCreate}
-              disabled={!canSubmitCreate}
+              disabled={!canSubmitCreate || !canCreate}
             >
               Khởi tạo & Xuất biên bản
             </Button>
@@ -931,11 +974,11 @@ export default function StocktakingPage() {
         onOpenChange={(open) => {
           setShowConfirmModal(open);
           if (!open) {
-            setSignedDocument(null);
+            setSignedDocuments([]);
           }
         }}
       >
-        <DialogContent className="max-w-[1180px] rounded-[28px] p-0 sm:max-h-[92vh] sm:overflow-hidden">
+        <DialogContent className="max-w-[1180px] rounded-[28px] p-0 max-h-[100vh] sm:max-h-[92vh] overflow-hidden flex flex-col">
           <DialogHeader className="border-b border-slate-200 px-5 py-5 sm:px-6">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -959,8 +1002,8 @@ export default function StocktakingPage() {
 
           {selectedRecord && (
             <>
-              <div className="space-y-8 overflow-y-auto px-5 py-5 sm:max-h-[calc(92vh-150px)] sm:px-6">
-                <div className="grid gap-4 rounded-[24px] border border-slate-200 bg-slate-50 p-5 md:grid-cols-2 md:p-8">
+              <div className="space-y-8 overflow-y-auto px-5 py-5 max-h-[calc(100vh-200px)] sm:max-h-[calc(92vh-150px)] sm:px-6">
+                <div className="grid gap-4 rounded-[24px] border border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 md:p-8">
                   <div>
                     <div className="text-[14px] font-semibold uppercase tracking-wide text-slate-400">Ma bien ban</div>
                     <div className="mt-2 text-[24px] font-semibold text-slate-950 sm:text-[28px]">
@@ -1013,7 +1056,7 @@ export default function StocktakingPage() {
                                 type="number"
                                 min={0}
                                 value={formValue.actualQuantity}
-                                onChange={(e) => updateConfirmItem(item.id, 'actualQuantity', Number(e.target.value))}
+                                onChange={(e) => updateConfirmItem(item.id, 'actualQuantity', Math.max(0, Number(e.target.value)))}
                                 className="h-16 rounded-[24px] border-slate-300 px-6 text-center text-[22px] font-semibold text-slate-950 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.04)]"
                               />
                               <div className={`mt-2 text-center text-[13px] font-medium ${discrepancy === 0 ? 'text-slate-400' : discrepancy > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -1030,22 +1073,15 @@ export default function StocktakingPage() {
                               placeholder="Nhap ly do..."
                               className="h-16 rounded-[24px] border-slate-300 px-5 text-[16px]"
                             />
-                            {item.evidenceUrl && (
+                            {parseEvidenceUrls(item.evidenceUrl).length > 0 && (
                               <button
                                 type="button"
                                 className="mt-2 text-sm font-medium text-violet-700 hover:text-violet-800"
-                                onClick={() => setPreviewImageUrl(item.evidenceUrl || '')}
+                                onClick={() => setPreviewImageUrl(parseEvidenceUrls(item.evidenceUrl)[0] || '')}
                               >
-                                Xem hinh minh chung da luu
+                                Xem {parseEvidenceUrls(item.evidenceUrl).length} hinh minh chung da luu
                               </button>
                             )}
-                          </div>
-
-                          <div className="flex justify-end lg:justify-center">
-                            <Button type="button" variant="outline" className="h-11 rounded-2xl px-4" onClick={() => openAdjustment(item)}>
-                              <RefreshCcw size={16} />
-                              Điều chỉnh
-                            </Button>
                           </div>
                         </div>
                       );
@@ -1054,36 +1090,46 @@ export default function StocktakingPage() {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="text-[18px] font-semibold text-slate-950 sm:text-[20px]">
-                    Hinh anh bien ban giay (Da ky xac nhan)
+                  <div className="flex items-center justify-between">
+                    <div className="text-[18px] font-semibold text-slate-950 sm:text-[20px]">
+                      Hinh anh bien ban giay (Da ky xac nhan)
+                    </div>
+                    {signedDocuments.length > 0 && (
+                      <span className="text-sm text-slate-500">{signedDocuments.length} anh</span>
+                    )}
                   </div>
 
-                  <label className="flex min-h-[240px] cursor-pointer flex-col items-center justify-center rounded-[28px] border-2 border-dashed border-slate-200 bg-white px-6 py-10 text-center transition hover:border-violet-300 hover:bg-violet-50/40">
+                  {signedDocuments.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {signedDocuments.map((doc, idx) => (
+                        <div key={idx} className="relative group aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                          <img src={doc.preview} alt={doc.name} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => handleSignedDocumentRemove(idx)}
+                            className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <label className="flex cursor-pointer items-center justify-center gap-3 rounded-[28px] border-2 border-dashed border-slate-200 bg-white px-6 py-6 text-center transition hover:border-violet-300 hover:bg-violet-50/40">
                     <input
                       type="file"
                       accept="image/*"
+                      multiple
                       className="hidden"
-                      onChange={(e) => handleSignedDocumentChange(e.target.files?.[0])}
+                      onChange={(e) => handleSignedDocumentsAdd(e.target.files)}
                     />
-
-                    {signedDocument?.preview ? (
-                      <div className="space-y-4">
-                        <div className="mx-auto h-24 w-24 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                          <img src={signedDocument.preview} alt={signedDocument.name} className="h-full w-full object-cover" />
-                        </div>
-                        <div className="text-[18px] font-medium text-slate-700">{signedDocument.name}</div>
-                        <div className="text-[15px] text-slate-400">Nhan de thay doi hoac keo tha anh khac</div>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                          <Upload size={34} />
-                        </div>
-                        <div className="text-[15px] text-slate-400 sm:text-[16px]">
-                          Nhan de tai len hoac keo tha anh bien ban
-                        </div>
-                      </div>
-                    )}
+                    <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                      <Upload size={22} />
+                    </div>
+                    <div className="text-[15px] text-slate-400 sm:text-[16px]">
+                      {signedDocuments.length > 0 ? 'Them anh bien ban khac' : 'Nhan de tai len anh bien ban (co the chon nhieu anh)'}
+                    </div>
                   </label>
                 </div>
               </div>
@@ -1106,97 +1152,16 @@ export default function StocktakingPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showAdjustmentModal} onOpenChange={setShowAdjustmentModal}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <RefreshCcw size={18} />
-              Điều chỉnh tồn kho từ kiểm kê
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="grid gap-4">
-            <div className="space-y-2">
-              <Label>Danh mục</Label>
-              <SearchableSelect
-                options={categories.map((category) => ({ value: category.id, label: category.name }))}
-                value={adjustmentForm.categoryId}
-                onChange={(v) => setAdjustmentForm((prev) => ({ ...prev, categoryId: v }))}
-                placeholder="Chọn danh mục"
-              />
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Vị trí</Label>
-                <SearchableSelect
-                  options={positions.map((position) => ({ value: position.id, label: position.label }))}
-                  value={adjustmentForm.warehousePositionId}
-                  onChange={(v) => setAdjustmentForm((prev) => ({ ...prev, warehousePositionId: v }))}
-                  placeholder="Chọn vị trí"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Loại điều chỉnh</Label>
-                <select
-                  className="form-select"
-                  value={adjustmentForm.type}
-                  onChange={(e) => setAdjustmentForm((prev) => ({ ...prev, type: e.target.value as 'INCREASE' | 'DECREASE' }))}
-                >
-                  <option value="INCREASE">Tăng tồn</option>
-                  <option value="DECREASE">Giảm tồn</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Số lượng điều chỉnh</Label>
-              <Input
-                type="number"
-                min={1}
-                value={adjustmentForm.quantity}
-                onChange={(e) => setAdjustmentForm((prev) => ({ ...prev, quantity: Number(e.target.value) }))}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Lý do điều chỉnh</Label>
-              <textarea
-                className="form-control min-h-[96px] py-3"
-                value={adjustmentForm.reason}
-                onChange={(e) => setAdjustmentForm((prev) => ({ ...prev, reason: e.target.value }))}
-                placeholder="Nhập lý do điều chỉnh"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setShowAdjustmentModal(false)}>
-              Hủy
-            </Button>
-            <Button
-              type="button"
-              onClick={handleAdjustmentSubmit}
-              disabled={!adjustmentForm.categoryId || !adjustmentForm.quantity || !adjustmentForm.reason.trim()}
-            >
-              <RefreshCcw size={16} />
-              Xác nhận điều chỉnh
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
-        <DialogContent className="max-w-[1100px] rounded-[24px] p-0">
+        <DialogContent className="max-w-[1100px] rounded-[24px] p-0 max-h-[100vh] sm:max-h-[92vh] overflow-hidden flex flex-col">
           <DialogHeader className="border-b border-slate-200 px-5 py-4">
             <DialogTitle className="text-[18px] font-semibold text-slate-950">Biên bản kiểm kê kho hàng</DialogTitle>
           </DialogHeader>
 
           {selectedRecord && (
-            <div className="px-6 py-6">
-              <div className="mx-auto w-full max-w-[900px] rounded-[10px] border border-slate-200 bg-white px-10 py-8 shadow-sm">
-                <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_280px]">
+            <div className="px-6 py-6 overflow-y-auto flex-1 max-h-[calc(100vh-180px)] sm:max-h-[calc(92vh-140px)]">
+              <div className="mx-auto w-full max-w-[900px] rounded-[10px] border border-slate-200 bg-white px-4 md:px-10 py-4 md:py-8 shadow-sm">
+                <div className="grid gap-6 sm:grid-cols-[minmax(0,1fr)_280px]">
                   <div>
                     <div className="text-[22px] font-bold uppercase text-slate-950">{generalSettings.storeName || generalSettings.brandName}</div>
                     <div className="mt-1 text-[15px] text-slate-700">Địa chỉ: {generalSettings.address || '-'}</div>
@@ -1211,7 +1176,7 @@ export default function StocktakingPage() {
 
                 <div className="my-6 border-t-2 border-slate-900" />
 
-                <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="grid gap-6 sm:grid-cols-[minmax(0,1fr)_320px]">
                   <div className="space-y-3 text-[16px] text-slate-900">
                     <div><span className="font-semibold">Ngày tạo:</span> {formatDateTime(selectedRecord.createdAt)}</div>
                     <div><span className="font-semibold">Thời gian Cut-off:</span> {formatDateTime(selectedRecord.cutoffTime)}</div>
@@ -1250,25 +1215,31 @@ export default function StocktakingPage() {
                             <td className="border border-slate-500 px-3 py-3 text-center font-semibold">{formatNumber(item.systemQuantity)}</td>
                             <td className="border border-slate-500 px-3 py-3 text-center">{actualDisplay}</td>
                             <td className="border border-slate-500 px-3 py-3 text-center">{discrepancyDisplay}</td>
-                            <td className="border border-slate-500 px-3 py-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="space-y-2">
-                                  <span className="block">{noteDisplay}</span>
-                                  {item.evidenceUrl && (
-                                    <button
-                                      type="button"
-                                      className="text-sm font-medium text-violet-700 hover:text-violet-800"
-                                      onClick={() => setPreviewImageUrl(item.evidenceUrl || '')}
-                                    >
-                                      Xem hinh minh chung
-                                    </button>
-                                  )}
-                                </div>
-                                <Button type="button" variant="outline" className="h-9 rounded-xl px-3" onClick={() => openAdjustment(item)}>
-                                  <RefreshCcw size={14} />
-                                  Điều chỉnh
-                                </Button>
-                              </div>
+                            <td className="border border-slate-500 px-3 py-3 text-sm text-slate-700">
+                              <span className="block">{noteDisplay}</span>
+                              {parseEvidenceUrls(item.evidenceUrl).length > 0 && (
+                                <button
+                                  type="button"
+                                  className="mt-1 text-sm font-medium text-violet-700 hover:text-violet-800"
+                                  onClick={() => setPreviewImageUrl(parseEvidenceUrls(item.evidenceUrl)[0] || '')}
+                                >
+                                  Xem {parseEvidenceUrls(item.evidenceUrl).length} hinh minh chung
+                                </button>
+                              )}
+                              {item.discrepancy !== 0 && (selectedRecord.status === 'PENDING' || selectedRecord.status === 'APPROVED') && (
+                                item.isBalanced ? (
+                                  <span className="mt-1 block text-[11px] font-semibold text-emerald-600">✓ Đã cân bằng kho</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="mt-1 flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                                    onClick={() => { setBalancingItem(item); setShowItemBalanceModal(true); }}
+                                  >
+                                    <RefreshCcw size={11} />
+                                    Cân bằng kho
+                                  </button>
+                                )
+                              )}
                             </td>
                           </tr>
                         );
@@ -1311,16 +1282,16 @@ export default function StocktakingPage() {
                     onClick={() => openConfirmation(selectedRecord)}
                   >
                     <Check size={16} />
-                    Xac nhan kiem ke
+                    Xác nhận kiểm kê
                   </Button>
                 )}
-                {(selectedRecord.status === 'PENDING' || selectedRecord.status === 'APPROVED') && (
+                {(selectedRecord.status === 'PENDING' || selectedRecord.status === 'APPROVED') && selectedRecord.items.some((i) => i.discrepancy !== 0 && !i.isBalanced) && (
                   <Button
                     className="h-10 rounded-2xl bg-emerald-600 px-4 hover:bg-emerald-700"
                     onClick={() => setShowBalanceModal(true)}
                   >
                     <RefreshCcw size={16} />
-                    Cân bằng kho
+                    Cân bằng kho toàn bộ
                   </Button>
                 )}
                 <Button variant="outline" className="h-10 rounded-2xl px-4" onClick={() => handleExportExcel(selectedRecord)}>
@@ -1328,7 +1299,7 @@ export default function StocktakingPage() {
                 </Button>
                 <Button className="h-10 rounded-2xl bg-violet-600 px-4 hover:bg-violet-700" onClick={() => handlePrint(selectedRecord)}>
                   <Printer size={16} />
-                  In biên bản (Chọn máy in)
+                  In biên bản
                 </Button>
               </>
             )}
@@ -1349,29 +1320,29 @@ export default function StocktakingPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Balance Stock Dialog */}
+      {/* Balance Stock All Dialog */}
       <Dialog open={showBalanceModal} onOpenChange={setShowBalanceModal}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <RefreshCcw size={18} />
-              Cân bằng kho
+              Cân bằng kho toàn bộ
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
-              Hệ thống sẽ tự động tạo giao dịch Nhập/Xuất kho để cân bằng tồn kho theo số liệu thực tế trên biên bản kiểm kê.
+              Hệ thống sẽ tự động tạo giao dịch Nhập/Xuất kho để cân bằng <strong>toàn bộ</strong> các dòng còn chênh lệch chưa được cân bằng trên biên bản kiểm kê này.
             </p>
 
             {selectedRecord && (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2">
                 <div className="text-sm font-semibold text-slate-900">Biên bản: {selectedRecord.id}</div>
                 <div className="text-sm text-slate-600">
-                  {selectedRecord.items.filter((i) => i.discrepancy !== 0).length} dòng có chênh lệch cần điều chỉnh
+                  {selectedRecord.items.filter((i) => i.discrepancy !== 0 && !i.isBalanced).length} dòng chênh lệch chưa cân bằng
                 </div>
                 <div className="space-y-1 max-h-40 overflow-auto">
-                  {selectedRecord.items.filter((i) => i.discrepancy !== 0).map((item) => (
+                  {selectedRecord.items.filter((i) => i.discrepancy !== 0 && !i.isBalanced).map((item) => (
                     <div key={item.id} className="flex justify-between text-xs">
                       <span className="text-slate-700">{item.itemLabel}</span>
                       <span className={item.discrepancy > 0 ? 'text-emerald-600 font-semibold' : 'text-rose-600 font-semibold'}>
@@ -1384,7 +1355,7 @@ export default function StocktakingPage() {
             )}
 
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-              Sau khi cân bằng, hệ thống sẽ tự động tạo giao dịch nhập/xuất kho và ghi chú "Điều chỉnh cân bằng kho theo Biên bản kiểm kê".
+              Sau khi cân bằng, hệ thống sẽ tự động tạo giao dịch nhập/xuất kho cho toàn bộ các dòng chưa được cân bằng.
             </div>
           </div>
 
@@ -1398,17 +1369,76 @@ export default function StocktakingPage() {
                 if (!selectedRecord) return;
                 try {
                   const res = await api.post(`/stocktaking/${selectedRecord.id}/balance`);
-                  alert(res.data.message || 'Cân bằng kho thành công!');
+                  alert(res.data.message || 'Cân bằng kho toàn bộ thành công!');
                   setShowBalanceModal(false);
-                  setShowDetailModal(false);
-                  fetchRecords();
+                  await openDetail(selectedRecord.id);
+                  await fetchRecords();
                 } catch (err: any) {
                   alert(err.response?.data?.message || 'Không thể cân bằng kho');
                 }
               }}
             >
               <Check size={14} />
-              Xác nhận cân bằng kho
+              Xác nhận cân bằng kho toàn bộ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Balance Single Item Dialog */}
+      <Dialog open={showItemBalanceModal} onOpenChange={(open) => { setShowItemBalanceModal(open); if (!open) setBalancingItem(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <RefreshCcw size={18} />
+              Cân bằng kho – xác nhận
+            </DialogTitle>
+          </DialogHeader>
+
+          {balancingItem && (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600">
+                Xác nhận cân bằng kho cho dòng sau? Hệ thống sẽ tạo giao dịch kho ngay lập tức.
+              </p>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-2 text-sm">
+                <div><span className="font-semibold text-slate-700">Mã:</span> {balancingItem.itemCode}</div>
+                <div><span className="font-semibold text-slate-700">Tên:</span> {balancingItem.itemLabel}</div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-700">Chênh lệch:</span>
+                  <span className={`font-bold ${balancingItem.discrepancy > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {balancingItem.discrepancy > 0 ? `+${balancingItem.discrepancy} (Nhập kho)` : `${balancingItem.discrepancy} (Xuất kho)`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                Sau khi xác nhận, dòng này sẽ bị khoá và không thể cân bằng lại.
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowItemBalanceModal(false); setBalancingItem(null); }}>
+              Chưa cân bằng
+            </Button>
+            <Button
+              className="gap-1 bg-emerald-600 hover:bg-emerald-700"
+              onClick={async () => {
+                if (!balancingItem || !selectedRecord) return;
+                try {
+                  await api.post(`/stocktaking/items/${balancingItem.id}/balance`);
+                  setShowItemBalanceModal(false);
+                  setBalancingItem(null);
+                  await openDetail(selectedRecord.id);
+                  await fetchRecords();
+                } catch (err: any) {
+                  alert(err.response?.data?.message || 'Không thể cân bằng kho cho dòng này');
+                }
+              }}
+            >
+              <Check size={14} />
+              Xác nhận cân bằng
             </Button>
           </DialogFooter>
         </DialogContent>

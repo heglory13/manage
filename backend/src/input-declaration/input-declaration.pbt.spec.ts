@@ -19,7 +19,10 @@ describe('Input Declaration PBT', () => {
     it('rejects empty or whitespace-only names', async () => {
       await fc.assert(
         fc.asyncProperty(
-          fc.stringOf(fc.constantFrom(' ', '\t', '\n', '\r'), { minLength: 0, maxLength: 10 }),
+          fc.stringOf(fc.constantFrom(' ', '\t', '\n', '\r'), {
+            minLength: 0,
+            maxLength: 10,
+          }),
           async (whitespaceStr) => {
             const mockPrisma = {
               warehouseType: {
@@ -28,9 +31,13 @@ describe('Input Declaration PBT', () => {
               },
             };
 
-            const service = new InputDeclarationService(mockPrisma as unknown as PrismaService);
+            const service = new InputDeclarationService(
+              mockPrisma as unknown as PrismaService,
+            );
 
-            await expect(service.createWarehouseType(whitespaceStr)).rejects.toThrow(BadRequestException);
+            await expect(
+              service.createWarehouseType(whitespaceStr),
+            ).rejects.toThrow(BadRequestException);
             expect(mockPrisma.warehouseType.create).not.toHaveBeenCalled();
           },
         ),
@@ -40,19 +47,27 @@ describe('Input Declaration PBT', () => {
     it('rejects case-insensitive duplicate names', async () => {
       await fc.assert(
         fc.asyncProperty(
-          fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
+          fc
+            .string({ minLength: 1, maxLength: 20 })
+            .filter((s) => s.trim().length > 0),
           async (name) => {
             const mockPrisma = {
               warehouseType: {
-                findFirst: jest.fn().mockResolvedValue({ id: 'existing', name }),
+                findFirst: jest
+                  .fn()
+                  .mockResolvedValue({ id: 'existing', name }),
                 create: jest.fn(),
               },
             };
 
-            const service = new InputDeclarationService(mockPrisma as unknown as PrismaService);
+            const service = new InputDeclarationService(
+              mockPrisma as unknown as PrismaService,
+            );
 
             // Try creating with same name (case variation)
-            await expect(service.createWarehouseType(name)).rejects.toThrow(ConflictException);
+            await expect(service.createWarehouseType(name)).rejects.toThrow(
+              ConflictException,
+            );
             expect(mockPrisma.warehouseType.create).not.toHaveBeenCalled();
           },
         ),

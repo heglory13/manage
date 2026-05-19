@@ -1,4 +1,11 @@
-import { IsInt, IsOptional, IsString, IsNotEmpty, Min, IsUUID } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  IsNotEmpty,
+  Min,
+  IsUUID,
+} from 'class-validator';
 
 export class CreatePositionDto {
   @IsUUID()

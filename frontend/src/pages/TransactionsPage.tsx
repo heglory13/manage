@@ -8,6 +8,7 @@ import {
   Download,
   Eye,
   FileText,
+  ImageIcon,
   Lock,
   MapPin,
   Pencil,
@@ -18,6 +19,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
   XCircle,
 } from 'lucide-react';
 import AppLayout from '../components/layout/AppLayout';
@@ -28,15 +30,18 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { openBarcodePrintWindow } from '../lib/barcode';
-import { compressImageForUpload } from '../lib/image';
-import { formatNumber } from '../lib/utils';
+import { compressImageForUpload, compressReceiptImage } from '../lib/image';
+import { formatNumber, matchSel } from '../lib/utils';
+import { exportTransactionsToExcel } from '../lib/transactionExcel';
 import { useAuth } from '../contexts/AuthContext';
 import { defaultGeneralSettings, fetchGeneralSettings } from '../services/generalSettings';
 import SmartFilter from '../components/common/SmartFilter';
 import type { FilterField } from '../components/common/SmartFilter';
 import { useSavedFilters } from '../hooks/useSavedFilters';
 import { SearchableSelect } from '../components/ui/searchable-select';
+import { TransactionExportDialog } from '../components/inventory/TransactionExportDialog';
+
+const MAX_RECEIPT_IMAGES = 10;
 
 type AttributeOption = {
   id: string;
@@ -47,6 +52,9 @@ type AttributeOption = {
 type StorageZone = {
   id: string;
   name: string;
+  maxCapacity: number;
+  currentStock: number;
+  warehouseTypeId?: string | null;
 };
 
 type PositionOption = {
@@ -55,12 +63,18 @@ type PositionOption = {
   currentStock: number;
 };
 
+type LayoutData = {
+  id: string;
+  name: string;
+  positions: PositionOption[];
+};
+
 type TransactionRow = {
   id: string;
   categoryId: string | null;
   createdAt: string;
   actualStockDate: string | null;
-  kind: 'ALL' | 'STOCK_IN' | 'STOCK_OUT' | 'ADJUSTMENT';
+  kind: 'ALL' | 'STOCK_IN' | 'STOCK_OUT' | 'ADJUSTMENT' | 'TRANSFER';
   type: 'STOCK_IN' | 'STOCK_OUT';
   status: 'ACTIVE' | 'SUSPENDED';
   quantity: number;
@@ -71,10 +85,26 @@ type TransactionRow = {
   positionLabel: string | null;
   warehouseTypeName: string | null;
   storageZoneName: string | null;
+  storageZoneId: string | null;
+  warehousePositionId: string | null;
   productName: string | null;
   sku: string | null;
+  skuComboId: string | null;
+  receiptGroupId: string | null;
+  classificationId: string | null;
+  classificationName: string | null;
+  colorId: string | null;
+  colorName: string | null;
+  sizeId: string | null;
+  sizeName: string | null;
+  materialId: string | null;
+  materialName: string | null;
+  productConditionId: string | null;
+  productConditionName: string | null;
+  warehouseTypeId: string | null;
   userName: string;
   note: string;
+  imageUrls: string[];
 };
 
 type TransferForm = {
@@ -87,6 +117,8 @@ type TransferForm = {
 type NxtReportApiRow = {
   categoryId: string | null;
   categoryName: string;
+  productName: string;
+  sku: string;
   openingStock: number;
   openingValue: number;
   totalIn: number;
@@ -100,6 +132,8 @@ type NxtReportApiRow = {
 type NxtReportRow = {
   categoryId: string | null;
   categoryName: string;
+  productName: string;
+  sku: string;
   openingQty: number;
   openingValue: number;
   inQty: number;
@@ -121,23 +155,27 @@ type StockInLineForm = {
   storageZoneId: string;
   warehouseTypeId: string;
   quantity: number;
-  purchasePrice: number;
+  purchasePrice: number | null;
   salePrice: number;
   actualStockDate: string;
   notes: string;
 };
 
-type StockOutForm = {
+type StockOutLineForm = {
+  id: string;
   categoryId: string;
-  warehousePositionId: string;
+  storageZoneId: string;
   skuComboId: string;
   quantity: number;
   notes: string;
+  search: string;
+  selectedProduct: string;
 };
 
 type AdjustmentForm = {
   categoryId: string;
-  warehousePositionId: string;
+  skuComboId: string;
+  storageZoneId: string;
   quantity: number;
   type: 'INCREASE' | 'DECREASE';
   reason: string;
@@ -167,13 +205,32 @@ type PreliminaryCheckForm = {
   note: string;
 };
 
-type BarcodePrintItem = {
-  transactionId: string;
-  categoryName: string;
-  productName: string;
-  barcodeValue: string;
-  salePrice: number;
+type SearchSkuComboResult = {
+  id: string;
+  compositeSku: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  classification: { id: string; name: string };
+  color: { id: string; name: string };
+  size: { id: string; name: string };
+  material: { id: string; name: string };
+};
+
+type EditTransactionForm = {
   quantity: number;
+  purchasePrice: number;
+  notes: string;
+  categoryId: string;
+  skuComboId: string;
+  classificationId: string;
+  colorId: string;
+  sizeId: string;
+  materialId: string;
+  productConditionId: string;
+  storageZoneId: string;
+  warehouseTypeId: string;
+  warehousePositionId: string;
+  actualStockDate: string;
 };
 
 const transactionTabs = [
@@ -182,6 +239,7 @@ const transactionTabs = [
   { key: 'STOCK_IN', label: 'Nhập kho' },
   { key: 'STOCK_OUT', label: 'Xuất Kho' },
   { key: 'ADJUSTMENT', label: 'Điều chỉnh' },
+  { key: 'TRANSFER', label: 'Điều chuyển kho' },
   { key: 'REPORT', label: 'Báo cáo nhập xuất tồn' },
 ] as const;
 
@@ -196,24 +254,29 @@ const createStockInLine = (overrides: Partial<StockInLineForm> = {}): StockInLin
   storageZoneId: '',
   warehouseTypeId: '',
   quantity: 1,
-  purchasePrice: 0,
+  purchasePrice: null,
   salePrice: 0,
   actualStockDate: new Date().toISOString().slice(0, 16),
   notes: '',
   ...overrides,
 });
 
-const defaultStockOutForm = (): StockOutForm => ({
+const createStockOutLine = (overrides: Partial<StockOutLineForm> = {}): StockOutLineForm => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   categoryId: '',
-  warehousePositionId: '',
+  storageZoneId: '',
   skuComboId: '',
   quantity: 1,
   notes: '',
+  search: '',
+  selectedProduct: '',
+  ...overrides,
 });
 
 const defaultAdjustmentForm = (): AdjustmentForm => ({
   categoryId: '',
-  warehousePositionId: '',
+  skuComboId: '',
+  storageZoneId: '',
   quantity: 1,
   type: 'INCREASE',
   reason: '',
@@ -248,7 +311,7 @@ function formatDateTime(value?: string | null) {
 
 function formatDateOnly(value?: string | null) {
   if (!value) return '-';
-  return new Intl.DateTimeFormat('en-US', {
+  return new Intl.DateTimeFormat('vi-VN', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
@@ -257,6 +320,19 @@ function formatDateOnly(value?: string | null) {
 
 function formatCurrency(value: number) {
   return `${formatNumber(value)}đ`;
+}
+
+function escapeHtml(value?: string | null) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function getStorageZoneRemaining(zone: StorageZone, reservedQuantity = 0) {
+  return Math.max(zone.maxCapacity - zone.currentStock - reservedQuantity, 0);
 }
 
 function getDefaultReportRange() {
@@ -276,7 +352,11 @@ export default function TransactionsPage() {
   const [activeTab, setActiveTab] = useState<(typeof transactionTabs)[number]['key']>('ALL');
   const [rows, setRows] = useState<TransactionRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [txPage, setTxPage] = useState(1);
+  const [txPageSize, setTxPageSize] = useState(50);
+  const [txTotal, setTxTotal] = useState(0);
   const [positions, setPositions] = useState<PositionOption[]>([]);
+  const [layouts, setLayouts] = useState<LayoutData[]>([]);
   const [categories, setCategories] = useState<AttributeOption[]>([]);
   const [classifications, setClassifications] = useState<AttributeOption[]>([]);
   const [colors, setColors] = useState<AttributeOption[]>([]);
@@ -290,41 +370,52 @@ export default function TransactionsPage() {
   const [preliminaryOpen, setPreliminaryOpen] = useState(false);
   const [productDetailOpen, setProductDetailOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
-  const [barcodeDialogOpen, setBarcodeDialogOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionRow | null>(null);
   const [selectedTransactionIds, setSelectedTransactionIds] = useState<string[]>([]);
   const [editTransactionOpen, setEditTransactionOpen] = useState(false);
-  const [editTransactionForm, setEditTransactionForm] = useState<{
-    quantity: number;
-    purchasePrice: number;
-    notes: string;
-  }>({ quantity: 0, purchasePrice: 0, notes: '' });
-  const [barcodeItems, setBarcodeItems] = useState<BarcodePrintItem[]>([]);
+  const [editTransactionForm, setEditTransactionForm] = useState<EditTransactionForm>({
+    quantity: 0,
+    purchasePrice: 0,
+    notes: '',
+    categoryId: '',
+    skuComboId: '',
+    classificationId: '',
+    colorId: '',
+    sizeId: '',
+    materialId: '',
+    productConditionId: '',
+    storageZoneId: '',
+    warehouseTypeId: '',
+    warehousePositionId: '',
+    actualStockDate: '',
+  });
+  const [editTransactionSearch, setEditTransactionSearch] = useState('');
+  const [editTransactionSearchResults, setEditTransactionSearchResults] = useState<SearchSkuComboResult[]>([]);
+  const [editTransactionSearchOpen, setEditTransactionSearchOpen] = useState(false);
+  const [editTransactionSelectedProduct, setEditTransactionSelectedProduct] = useState('');
+  const [editExistingImageUrls, setEditExistingImageUrls] = useState<string[]>([]);
+  const [editReceiptImages, setEditReceiptImages] = useState<{ file: File; preview: string }[]>([]);
   const [transferForm, setTransferForm] = useState<TransferForm>(defaultTransferForm);
   const [preliminaryForm, setPreliminaryForm] = useState<PreliminaryCheckForm>(defaultPreliminaryForm);
   const [selectedPreliminaryCheck, setSelectedPreliminaryCheck] = useState<PreliminaryCheckRow | null>(null);
   const [stockInOpen, setStockInOpen] = useState(false);
+  const [isStockInSubmitting, setIsStockInSubmitting] = useState(false);
+  const [receiptImages, setReceiptImages] = useState<{ file: File; preview: string }[]>([]);
+  const [receiptImageViewIndex, setReceiptImageViewIndex] = useState<number | null>(null);
+  const [receiptDropActive, setReceiptDropActive] = useState(false);
+  const [txImageView, setTxImageView] = useState<{ urls: string[]; index: number } | null>(null);
   const [pickPreliminaryOpen, setPickPreliminaryOpen] = useState(false);
   const [stockOutOpen, setStockOutOpen] = useState(false);
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [stockInLines, setStockInLines] = useState<StockInLineForm[]>([createStockInLine()]);
-  const [stockOutForm, setStockOutForm] = useState<StockOutForm>(defaultStockOutForm);
-  const [stockOutSearch, setStockOutSearch] = useState('');
-  const [stockOutSearchResults, setStockOutSearchResults] = useState<Array<{
-    id: string;
-    compositeSku: string;
-    categoryId: string | null;
-    categoryName: string | null;
-    classification: { id: string; name: string };
-    color: { id: string; name: string };
-    size: { id: string; name: string };
-    material: { id: string; name: string };
-  }>>([]);
+  const [stockOutLines, setStockOutLines] = useState<StockOutLineForm[]>([createStockOutLine()]);
+  const [stockOutSearchLineId, setStockOutSearchLineId] = useState<string | null>(null);
+  const [stockOutSearchResults, setStockOutSearchResults] = useState<SearchSkuComboResult[]>([]);
   const [stockOutSearchOpen, setStockOutSearchOpen] = useState(false);
-  const [stockOutSelectedProduct, setStockOutSelectedProduct] = useState<string>('');
+  const [stockOutZonesByLine, setStockOutZonesByLine] = useState<Record<string, Array<{ storageZoneId: string; storageZoneName: string; stock: number }>>>({});
   const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentForm>(defaultAdjustmentForm);
   const [adjustSearch, setAdjustSearch] = useState('');
-  const [adjustSearchResults, setAdjustSearchResults] = useState<typeof stockOutSearchResults>([]);
+  const [adjustSearchResults, setAdjustSearchResults] = useState<SearchSkuComboResult[]>([]);
   const [adjustSearchOpen, setAdjustSearchOpen] = useState(false);
   const [adjustSelectedProduct, setAdjustSelectedProduct] = useState('');
   const [reportStartDate, setReportStartDate] = useState(defaultRange.startDate);
@@ -333,69 +424,104 @@ export default function TransactionsPage() {
   const [reportRows, setReportRows] = useState<NxtReportApiRow[]>([]);
   const [reportLoading, setReportLoading] = useState(false);
   const [generalSettings, setGeneralSettings] = useState(defaultGeneralSettings);
+  const [transactionExportOpen, setTransactionExportOpen] = useState(false);
+  const [transactionExporting, setTransactionExporting] = useState(false);
 
   // Smart filter
-  const transactionFilterFields = useMemo<FilterField[]>(() => [
-    {
-      key: 'kind',
-      label: 'Loại',
-      type: 'select',
-      options: [
-        { value: 'STOCK_IN', label: 'Nhập kho' },
-        { value: 'STOCK_OUT', label: 'Xuất kho' },
-        { value: 'ADJUSTMENT', label: 'Điều chỉnh' },
-      ],
-    },
-    {
-      key: 'status',
-      label: 'Trạng thái',
-      type: 'select',
-      options: [
-        { value: 'ACTIVE', label: 'Đang GD' },
-        { value: 'SUSPENDED', label: 'Ngưng GD' },
-      ],
-    },
-    {
-      key: 'categoryName',
-      label: 'Danh mục',
-      type: 'text',
-      placeholder: 'Tìm danh mục...',
-    },
-    {
-      key: 'productName',
-      label: 'Sản phẩm',
-      type: 'text',
-      placeholder: 'Tìm sản phẩm...',
-    },
-    {
-      key: 'sku',
-      label: 'SKU',
-      type: 'text',
-      placeholder: 'Tìm SKU...',
-    },
-    {
-      key: 'positionLabel',
-      label: 'Vị trí',
-      type: 'text',
-      placeholder: 'Tìm vị trí...',
-    },
-    {
-      key: 'userName',
-      label: 'Người tạo',
-      type: 'text',
-      placeholder: 'Tìm người tạo...',
-    },
-    {
-      key: 'dateFrom',
-      label: 'Từ ngày',
-      type: 'date',
-    },
-    {
-      key: 'dateTo',
-      label: 'Đến ngày',
-      type: 'date',
-    },
-  ], []);
+  const transactionFilterFields = useMemo<FilterField[]>(() => {
+    const buildOptions = (values: Array<string | number | null | undefined>) =>
+      [...new Set(values
+        .map((value) => (value ?? '').toString().trim())
+        .filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'vi'))
+        .map((value) => ({ value, label: value }));
+
+    return [
+      {
+        key: 'kind',
+        label: 'Loại',
+        type: 'select',
+        options: [
+          { value: 'STOCK_IN', label: 'Nhập kho' },
+          { value: 'STOCK_OUT', label: 'Xuất kho' },
+          { value: 'ADJUSTMENT', label: 'Điều chỉnh' },
+          { value: 'TRANSFER', label: 'Điều chuyển kho' },
+        ],
+      },
+      {
+        key: 'status',
+        label: 'Trạng thái',
+        type: 'select',
+        options: [
+          { value: 'ACTIVE', label: 'Đang GD' },
+          { value: 'SUSPENDED', label: 'Ngưng GD' },
+        ],
+      },
+      { key: 'dateFrom', label: 'Từ ngày', type: 'date' },
+      { key: 'dateTo', label: 'Đến ngày', type: 'date' },
+      {
+        key: 'categoryName',
+        label: 'Danh mục',
+        type: 'text',
+        placeholder: 'Chọn danh mục...',
+        asyncLoad: async () => {
+          const res = await api.get('/categories');
+          const items = res.data.data || res.data || [];
+          return items.map((c: any) => ({ value: c.name, label: c.name }));
+        },
+      },
+      {
+        key: 'productName',
+        label: 'Sản phẩm',
+        type: 'text',
+        placeholder: 'Chọn sản phẩm...',
+        options: buildOptions(rows.map((row) => row.productName)),
+      },
+      {
+        key: 'sku',
+        label: 'SKU',
+        type: 'text',
+        placeholder: 'Chọn SKU...',
+        options: buildOptions(rows.map((row) => row.sku)),
+      },
+      {
+        key: 'warehouseInfo',
+        label: 'Kho / Thùng',
+        type: 'text',
+        placeholder: 'Chọn kho, thùng...',
+        asyncLoad: async () => {
+          const [zonesRes, typesRes] = await Promise.all([
+            api.get('/input-declarations/storage-zones'),
+            api.get('/input-declarations/warehouse-types'),
+          ]);
+          const zones = zonesRes.data.data || zonesRes.data || [];
+          const types = typesRes.data.data || typesRes.data || [];
+          return [
+            ...zones.map((z: any) => ({ value: z.name, label: z.name })),
+            ...types.map((t: any) => ({ value: t.name, label: t.name })),
+          ];
+        },
+      },
+      {
+        key: 'purchasePrice',
+        label: 'Giá nhập',
+        type: 'number',
+        options: buildOptions(rows.map((row) => row.purchasePrice)),
+        placeholder: 'Chọn giá nhập...',
+      },
+      {
+        key: 'userName',
+        label: 'Người tạo',
+        type: 'text',
+        placeholder: 'Chọn người tạo...',
+        asyncLoad: async () => {
+          const res = await api.get('/users');
+          const items = res.data.data || res.data || [];
+          return items.map((u: any) => ({ value: u.name, label: u.name }));
+        },
+      },
+    ];
+  }, [rows]);
 
   const savedFilterHook = useSavedFilters({ pageKey: 'transactions' });
 
@@ -403,14 +529,26 @@ export default function TransactionsPage() {
     const f = savedFilterHook.filters;
     if (Object.keys(f).length === 0) return rows;
 
+    const matchContains = (filterVal: unknown, itemVal: string) => {
+      if (!filterVal || (Array.isArray(filterVal) && (filterVal as unknown[]).length === 0)) return true;
+      const vals = Array.isArray(filterVal) ? (filterVal as string[]) : [String(filterVal)];
+      return vals.some((v) => itemVal.toLowerCase().includes(v.toLowerCase()));
+    };
+
     return rows.filter((row) => {
-      if (f.kind && row.kind !== f.kind) return false;
-      if (f.status && row.status !== f.status) return false;
-      if (f.categoryName && !row.categoryName.toLowerCase().includes((f.categoryName as string).toLowerCase())) return false;
-      if (f.productName && !(row.productName || '').toLowerCase().includes((f.productName as string).toLowerCase())) return false;
-      if (f.sku && !(row.sku || '').toLowerCase().includes((f.sku as string).toLowerCase())) return false;
-      if (f.positionLabel && !(row.positionLabel || '').toLowerCase().includes((f.positionLabel as string).toLowerCase())) return false;
-      if (f.userName && !row.userName.toLowerCase().includes((f.userName as string).toLowerCase())) return false;
+      if (!matchSel(f.kind, row.kind)) return false;
+      if (!matchSel(f.status, row.status)) return false;
+      if (!matchContains(f.categoryName, row.categoryName)) return false;
+      if (!matchContains(f.productName, row.productName || '')) return false;
+      if (!matchSel(f.sku, row.sku || '')) return false;
+      if (
+        f.warehouseInfo &&
+        ![row.warehouseTypeName, row.storageZoneName, row.positionLabel]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes((f.warehouseInfo as string).toLowerCase()))
+      ) return false;
+      if (f.purchasePrice && Number(row.purchasePrice ?? -1) !== Number(f.purchasePrice)) return false;
+      if (!matchContains(f.userName, row.userName)) return false;
       if (f.dateFrom) {
         const from = new Date(f.dateFrom as string);
         const rowDate = new Date(row.createdAt);
@@ -426,16 +564,14 @@ export default function TransactionsPage() {
     });
   }, [rows, savedFilterHook.filters]);
 
-  const selectedStockOutCategory = useMemo(() => categories.find((category) => category.id === stockOutForm.categoryId), [categories, stockOutForm.categoryId]);
   const selectedAdjustmentCategory = useMemo(() => categories.find((category) => category.id === adjustmentForm.categoryId), [categories, adjustmentForm.categoryId]);
-  const selectedTransferCurrentPosition = useMemo(
-    () => positions.find((position) => position.id === transferForm.currentPositionId),
-    [positions, transferForm.currentPositionId],
+  const selectedTransferCurrentZone = useMemo(
+    () => storageZones.find((zone) => zone.id === (selectedTransaction?.storageZoneId || transferForm.currentPositionId)),
+    [storageZones, selectedTransaction?.storageZoneId, transferForm.currentPositionId],
   );
-  const selectedStockOutPosition = useMemo(() => positions.find((position) => position.id === stockOutForm.warehousePositionId), [positions, stockOutForm.warehousePositionId]);
-  const selectedAdjustmentPosition = useMemo(
-    () => positions.find((position) => position.id === adjustmentForm.warehousePositionId),
-    [positions, adjustmentForm.warehousePositionId]
+  const selectedAdjustmentZone = useMemo(
+    () => storageZones.find((zone) => zone.id === adjustmentForm.storageZoneId),
+    [storageZones, adjustmentForm.storageZoneId]
   );
   const categoryStockMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -455,26 +591,50 @@ export default function TransactionsPage() {
     () => stockInLines.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
     [stockInLines],
   );
+  const getReservedQuantityForZone = useCallback((zoneId: string, currentLineId?: string) => {
+    return stockInLines.reduce((sum, line) => {
+      if (line.id === currentLineId || line.storageZoneId !== zoneId) return sum;
+      return sum + Number(line.quantity || 0);
+    }, 0);
+  }, [stockInLines]);
+  const getStorageZoneMeta = useCallback((line: StockInLineForm) => {
+    const zone = storageZones.find((item) => item.id === line.storageZoneId);
+    if (!zone) return null;
+
+    const reservedQuantity = getReservedQuantityForZone(zone.id, line.id);
+    const remaining = getStorageZoneRemaining(zone, reservedQuantity);
+
+    return {
+      zone,
+      reservedQuantity,
+      remaining,
+      isExceeded: Number(line.quantity || 0) > remaining,
+    };
+  }, [getReservedQuantityForZone, storageZones]);
   const canDeleteTransactions = user?.role === 'ADMIN' && Boolean(user?.permissions?.transactions?.delete);
   const canSuspendTransactions =
     (user?.role === 'ADMIN' || user?.role === 'MANAGER') && Boolean(user?.permissions?.transactions?.edit);
+  const canCreateTransactions = Boolean(user?.permissions?.transactions?.create);
+  const canEditTransactions = Boolean(user?.permissions?.transactions?.edit);
   const selectedRows = useMemo(
     () => rows.filter((row) => selectedTransactionIds.includes(row.id)),
     [rows, selectedTransactionIds],
   );
 
-  const fetchTransactions = useCallback(async () => {
+  const fetchTransactions = useCallback(async (page = txPage) => {
     setIsLoading(true);
     try {
       const kind = activeTab === 'REPORT' || activeTab === 'PRECHECK' ? 'ALL' : activeTab;
-      const res = await api.get('/inventory/transactions', { params: { kind, limit: 100 } });
+      const res = await api.get('/inventory/transactions', { params: { kind, limit: txPageSize, page } });
       setRows(res.data.data || []);
+      setTxTotal(res.data.total || 0);
+      setTxPage(page);
     } catch (error) {
       console.error('Error fetching transactions:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [activeTab]);
+  }, [activeTab, txPageSize, txPage]);
 
   const fetchPreliminaryChecks = useCallback(async () => {
     setPreliminaryLoading(true);
@@ -511,10 +671,10 @@ export default function TransactionsPage() {
 
   const fetchMetadata = useCallback(async () => {
     try {
-      const [declarationRes, categoriesRes, layoutRes] = await Promise.all([
+      const [declarationRes, categoriesRes, layoutsRes] = await Promise.all([
         api.get('/input-declarations/all'),
         api.get('/input-declarations/categories'),
-        api.get('/warehouse/layout'),
+        api.get('/warehouse/layouts/with-skus'),
       ]);
 
       const declarationData = declarationRes.data;
@@ -526,19 +686,59 @@ export default function TransactionsPage() {
       setProductConditions(declarationData.productConditions || []);
       setStorageZones(declarationData.storageZones || []);
       setWarehouseTypes(declarationData.warehouseTypes || []);
-      setPositions(
-        (layoutRes.data?.positions || [])
-          .filter((position: any) => position.label)
-          .map((position: any) => ({
-            id: position.id,
-            label: position.label,
-            currentStock: position.currentStock,
-          }))
-      );
+
+      const allLayouts: LayoutData[] = (layoutsRes.data || []).map((l: any) => ({
+        id: l.id,
+        name: l.name,
+        positions: (l.positions || [])
+          .filter((p: any) => p.label)
+          .map((p: any) => ({ id: p.id, label: p.label, currentStock: p.currentStock })),
+      }));
+      setLayouts(allLayouts);
+      setPositions(allLayouts.flatMap((l) => l.positions));
     } catch (error) {
       console.error('Error fetching transaction metadata:', error);
     }
   }, []);
+
+  const getZonesForWarehouseType = useCallback((warehouseTypeId: string) => {
+    if (!warehouseTypeId) return storageZones;
+    // Compatible zones first, then incompatible ones so user can see them but with warning
+    return [...storageZones].sort((a, b) => {
+      const aOk = !a.warehouseTypeId || a.warehouseTypeId === warehouseTypeId;
+      const bOk = !b.warehouseTypeId || b.warehouseTypeId === warehouseTypeId;
+      if (aOk && !bOk) return -1;
+      if (!aOk && bOk) return 1;
+      return 0;
+    });
+  }, [storageZones]);
+
+  const getZoneConflictName = useCallback((zone: StorageZone, warehouseTypeId: string): string | null => {
+    if (!warehouseTypeId) return null;
+
+    // Zone đã được gán rõ ràng vào một warehouse type
+    if (zone.warehouseTypeId) {
+      if (zone.warehouseTypeId === warehouseTypeId) return null;
+      return warehouseTypes.find((t) => t.id === zone.warehouseTypeId)?.name ?? null;
+    }
+
+    // Zone chưa gán — suy ra từ position: tìm layout nào có position trùng tên zone
+    for (const layout of layouts) {
+      const hasPosition = layout.positions.some(
+        (p) => p.label.toLowerCase() === zone.name.toLowerCase(),
+      );
+      if (hasPosition) {
+        const matchingType = warehouseTypes.find(
+          (t) => t.name.toLowerCase() === layout.name.toLowerCase(),
+        );
+        if (matchingType && matchingType.id !== warehouseTypeId) {
+          return matchingType.name;
+        }
+      }
+    }
+
+    return null;
+  }, [warehouseTypes, layouts]);
 
   useEffect(() => {
     fetchMetadata();
@@ -578,19 +778,64 @@ export default function TransactionsPage() {
   const resetStockInModal = useCallback(() => {
     setStockInLines([createStockInLine()]);
     setSelectedPreliminaryCheck(null);
+    setIsStockInSubmitting(false);
+    setReceiptImages((prev) => {
+      prev.forEach((img) => URL.revokeObjectURL(img.preview));
+      return [];
+    });
   }, []);
 
   const updateStockInLine = useCallback((lineId: string, patch: Partial<StockInLineForm>) => {
     setStockInLines((prev) =>
       prev.map((line) => {
         if (line.id !== lineId) return line;
-        return { ...line, ...patch };
+        const nextLine = { ...line, ...patch };
+        if (patch.warehouseTypeId !== undefined && patch.warehouseTypeId !== line.warehouseTypeId) {
+          nextLine.storageZoneId = '';
+        }
+        return nextLine;
       }),
     );
   }, []);
 
   const addStockInLine = useCallback(() => {
     setStockInLines((prev) => [...prev, createStockInLine()]);
+  }, []);
+
+  const handleReceiptImageSelect = useCallback(async (files: FileList | null) => {
+    if (!files) return;
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (!imageFiles.length) return;
+
+    setReceiptImages((prev) => {
+      const slots = MAX_RECEIPT_IMAGES - prev.length;
+      if (slots <= 0) {
+        alert(`Tối đa ${MAX_RECEIPT_IMAGES} ảnh mỗi phiếu.`);
+        return prev;
+      }
+      return prev; // placeholder — real update below
+    });
+
+    const compressedAll = await Promise.all(
+      imageFiles.slice(0, MAX_RECEIPT_IMAGES).map(async (file) => {
+        const compressed = await compressReceiptImage(file);
+        return { file: compressed, preview: URL.createObjectURL(compressed) };
+      }),
+    );
+
+    setReceiptImages((prev) => {
+      const slots = MAX_RECEIPT_IMAGES - prev.length;
+      if (slots <= 0) return prev;
+      const toAdd = compressedAll.slice(0, slots);
+      return [...prev, ...toAdd];
+    });
+  }, []);
+
+  const removeReceiptImage = useCallback((index: number) => {
+    setReceiptImages((prev) => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
   }, []);
 
   const removeStockInLine = useCallback((lineId: string) => {
@@ -661,11 +906,14 @@ export default function TransactionsPage() {
   };
 
   const submitStockIn = async () => {
+    if (isStockInSubmitting) return;
+    setIsStockInSubmitting(true);
     try {
       // Validate all required fields per line
       const missingFields: string[] = [];
       stockInLines.forEach((line, index) => {
         const lineNum = index + 1;
+        const zoneMeta = getStorageZoneMeta(line);
         if (!line.categoryId) missingFields.push(`Dòng ${lineNum}: chưa chọn Danh mục`);
         if (!line.classificationId) missingFields.push(`Dòng ${lineNum}: chưa chọn Phân loại`);
         if (!line.colorId) missingFields.push(`Dòng ${lineNum}: chưa chọn Màu sắc`);
@@ -675,7 +923,17 @@ export default function TransactionsPage() {
         if (line.quantity <= 0) missingFields.push(`Dòng ${lineNum}: Số lượng phải lớn hơn 0`);
         if (!line.warehouseTypeId) missingFields.push(`Dòng ${lineNum}: chưa chọn Loại kho`);
         if (!line.storageZoneId) missingFields.push(`Dòng ${lineNum}: chưa chọn Khu vực / Thùng`);
-        if (line.purchasePrice <= 0) missingFields.push(`Dòng ${lineNum}: Giá nhập phải lớn hơn 0`);
+        if (line.storageZoneId && line.warehouseTypeId) {
+          const selectedZone = storageZones.find((z) => z.id === line.storageZoneId);
+          const conflictTypeName = selectedZone ? getZoneConflictName(selectedZone, line.warehouseTypeId) : null;
+          if (conflictTypeName) {
+            missingFields.push(`Dòng ${lineNum}: Thùng "${selectedZone?.name}" đang được gán vào loại kho "${conflictTypeName}" — vui lòng chọn thùng khác`);
+          }
+        }
+        if (zoneMeta && line.quantity > zoneMeta.remaining) {
+          missingFields.push(`Dòng ${lineNum}: ${zoneMeta.zone.name} chỉ còn sức chứa ${formatNumber(zoneMeta.remaining)}/${formatNumber(zoneMeta.zone.maxCapacity)}`);
+        }
+        if (line.purchasePrice === null || line.purchasePrice < 0) missingFields.push(`Dòng ${lineNum}: Vui lòng nhập giá nhập kho (có thể nhập 0 nếu là hàng ký gửi)`);
       });
 
       if (missingFields.length > 0) {
@@ -690,6 +948,7 @@ export default function TransactionsPage() {
         salePrice: number;
         productConditionId?: string;
         storageZoneId?: string;
+        warehouseTypeId?: string;
         warehousePositionId?: string;
         quantity: number;
         actualStockDate: string;
@@ -718,26 +977,76 @@ export default function TransactionsPage() {
           }
         }
 
-        // Find warehousePosition matching the storageZone name
+        // Find warehousePosition matching the storageZone name, or auto-create if not found
         let warehousePositionId: string | undefined;
         if (item.storageZoneId) {
           const zone = storageZones.find((z) => z.id === item.storageZoneId);
           if (zone) {
-            const matchingPosition = positions.find(
+            const warehouseType = warehouseTypes.find((t) => t.id === item.warehouseTypeId);
+            const matchingLayout = warehouseType
+              ? layouts.find((l) => l.name.toLowerCase() === warehouseType.name.toLowerCase())
+              : undefined;
+            const searchPositions = matchingLayout ? matchingLayout.positions : positions;
+            const matchingPosition = searchPositions.find(
               (p) => p.label.toLowerCase() === zone.name.toLowerCase(),
             );
             if (matchingPosition) {
               warehousePositionId = matchingPosition.id;
+            } else if (item.warehouseTypeId) {
+              // Position not in cached layouts — fetch fresh and find or create
+              try {
+                const warehouseType = warehouseTypes.find((t) => t.id === item.warehouseTypeId);
+                if (warehouseType) {
+                  // Always fetch fresh layout data (cache may be stale)
+                  const layoutRes = await api.get('/warehouse/layouts/with-skus');
+                  let layout = (layoutRes.data || []).find(
+                    (l: any) => l.name.toLowerCase() === warehouseType.name.toLowerCase(),
+                  );
+                  if (!layout) {
+                    const createRes = await api.post('/warehouse/layout', {
+                      name: warehouseType.name,
+                      rows: 4,
+                      columns: 6,
+                      layoutMode: 'FREE',
+                    });
+                    layout = createRes.data;
+                  }
+                  if (layout) {
+                    // Check if position already exists in fresh data before creating
+                    const existingPos = (layout.positions || []).find(
+                      (p: any) => p.label.toLowerCase() === zone.name.toLowerCase(),
+                    );
+                    if (existingPos) {
+                      warehousePositionId = existingPos.id;
+                    } else {
+                      const posCount = layout.positions?.length || 0;
+                      const newPosRes = await api.post('/warehouse/positions', {
+                        layoutId: layout.id,
+                        label: zone.name,
+                        x: 24 + (posCount % 4) * 240,
+                        y: 24 + Math.floor(posCount / 4) * 180,
+                        width: 210,
+                        height: 150,
+                        maxCapacity: zone.maxCapacity,
+                      });
+                      warehousePositionId = newPosRes.data?.id;
+                    }
+                  }
+                }
+              } catch (err) {
+                console.error('Auto-create position failed:', err);
+              }
             }
           }
         }
 
         resolvedLines.push({
           categoryId: item.categoryId,
-          purchasePrice: Number(item.purchasePrice),
+          purchasePrice: item.purchasePrice ?? 0,
           salePrice: Number(item.purchasePrice),
           productConditionId: item.productConditionId || undefined,
           storageZoneId: item.storageZoneId || undefined,
+          warehouseTypeId: item.warehouseTypeId || undefined,
           warehousePositionId,
           quantity: Number(item.quantity),
           actualStockDate: item.actualStockDate,
@@ -765,20 +1074,36 @@ export default function TransactionsPage() {
         return;
       }
 
-      if (resolvedLines.some((item) => !item.categoryId || item.purchasePrice <= 0 || item.quantity <= 0)) {
+      if (resolvedLines.some((item) => !item.categoryId || item.purchasePrice < 0 || item.quantity <= 0)) {
         alert('Mỗi dòng nhập kho cần có danh mục, số lượng và giá nhập hợp lệ.');
         return;
       }
 
-      if (resolvedLines.length === 1) {
+      // Upload receipt-level images
+      const uploadedImageUrls: string[] = [];
+      for (const img of receiptImages) {
+        const formData = new FormData();
+        formData.append('file', img.file);
+        const uploadRes = await api.post('/upload', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        uploadedImageUrls.push(uploadRes.data.url as string);
+      }
+
+      const linesWithImages = resolvedLines.map((line) => ({
+        ...line,
+        imageUrls: uploadedImageUrls.length > 0 ? uploadedImageUrls : undefined,
+      }));
+
+      if (linesWithImages.length === 1) {
         await api.post('/inventory/stock-in', {
-          ...resolvedLines[0],
+          ...linesWithImages[0],
           preliminaryCheckId: selectedPreliminaryCheck?.id || undefined,
         });
       } else {
         await api.post('/inventory/stock-in/batch', {
           preliminaryCheckId: selectedPreliminaryCheck?.id || undefined,
-          items: resolvedLines,
+          items: linesWithImages,
         });
       }
       setStockInOpen(false);
@@ -789,51 +1114,101 @@ export default function TransactionsPage() {
       if (activeTab === 'REPORT') fetchReport();
     } catch (err: any) {
       alert(err.response?.data?.message || 'Không thể nhập hàng');
+    } finally {
+      setIsStockInSubmitting(false);
     }
   };
 
-  const searchSkuCombos = useCallback(async (query: string, target: 'stockOut' | 'adjust' = 'stockOut') => {
+  const searchSkuCombos = useCallback(async (query: string, target: 'stockOut' | 'adjust' | 'edit' = 'stockOut') => {
     if (!query || query.length < 1) {
       if (target === 'stockOut') {
         setStockOutSearchResults([]);
         setStockOutSearchOpen(false);
-      } else {
+      } else if (target === 'adjust') {
         setAdjustSearchResults([]);
         setAdjustSearchOpen(false);
+      } else {
+        setEditTransactionSearchResults([]);
+        setEditTransactionSearchOpen(false);
       }
       return;
     }
     try {
       const res = await api.get('/input-declarations/sku-combos', {
-        params: { search: query, limit: 10 },
+        params: { search: query, limit: 10, ...(target === 'stockOut' ? { stockOut: 'true' } : {}) },
       });
       if (target === 'stockOut') {
         setStockOutSearchResults(res.data.data || []);
         setStockOutSearchOpen(true);
-      } else {
+      } else if (target === 'adjust') {
         setAdjustSearchResults(res.data.data || []);
         setAdjustSearchOpen(true);
+      } else {
+        setEditTransactionSearchResults(res.data.data || []);
+        setEditTransactionSearchOpen(true);
       }
     } catch {
       if (target === 'stockOut') setStockOutSearchResults([]);
-      else setAdjustSearchResults([]);
+      else if (target === 'adjust') setAdjustSearchResults([]);
+      else setEditTransactionSearchResults([]);
     }
   }, []);
 
+  const updateStockOutLine = (lineId: string, patch: Partial<StockOutLineForm>) => {
+    setStockOutLines((prev) => prev.map((line) => (line.id === lineId ? { ...line, ...patch } : line)));
+  };
+
+  const fetchStockOutZonesForLine = async (lineId: string, skuComboId: string) => {
+    try {
+      const res = await api.get('/inventory/stock-by-zone', { params: { skuComboId } });
+      setStockOutZonesByLine((prev) => ({ ...prev, [lineId]: res.data || [] }));
+    } catch {
+      setStockOutZonesByLine((prev) => ({ ...prev, [lineId]: [] }));
+    }
+  };
+
+  const addStockOutLine = () => {
+    setStockOutLines((prev) => [...prev, createStockOutLine()]);
+  };
+
+  const removeStockOutLine = (lineId: string) => {
+    setStockOutLines((prev) => (prev.length === 1 ? prev : prev.filter((line) => line.id !== lineId)));
+    if (stockOutSearchLineId === lineId) {
+      setStockOutSearchLineId(null);
+      setStockOutSearchResults([]);
+      setStockOutSearchOpen(false);
+    }
+  };
+
   const submitStockOut = async () => {
     try {
-      await api.post('/inventory/stock-out', {
-        categoryId: stockOutForm.categoryId,
-        skuComboId: stockOutForm.skuComboId || undefined,
-        warehousePositionId: stockOutForm.warehousePositionId || undefined,
-        quantity: Number(stockOutForm.quantity),
-        notes: stockOutForm.notes || undefined,
-      });
+      const resolvedLines = stockOutLines
+        .filter((line) => line.categoryId && line.skuComboId && line.quantity > 0)
+        .map((line) => ({
+          categoryId: line.categoryId,
+          skuComboId: line.skuComboId || undefined,
+          storageZoneId: line.storageZoneId || undefined,
+          quantity: Number(line.quantity),
+          notes: line.notes || undefined,
+        }));
+
+      if (resolvedLines.length !== stockOutLines.length) {
+        alert('Mỗi dòng xuất kho cần chọn sản phẩm, vị trí và số lượng hợp lệ.');
+        return;
+      }
+
+      if (resolvedLines.length === 1) {
+        await api.post('/inventory/stock-out', resolvedLines[0]);
+      } else {
+        await api.post('/inventory/stock-out/batch', {
+          items: resolvedLines,
+        });
+      }
       setStockOutOpen(false);
-      setStockOutForm(defaultStockOutForm());
-      setStockOutSearch('');
-      setStockOutSelectedProduct('');
+      setStockOutLines([createStockOutLine()]);
+      setStockOutSearchLineId(null);
       setStockOutSearchResults([]);
+      setStockOutSearchOpen(false);
       fetchTransactions();
       fetchMetadata();
       if (activeTab === 'REPORT') fetchReport();
@@ -846,7 +1221,8 @@ export default function TransactionsPage() {
     try {
       await api.post('/inventory/adjust', {
         categoryId: adjustmentForm.categoryId,
-        warehousePositionId: adjustmentForm.warehousePositionId || undefined,
+        skuComboId: adjustmentForm.skuComboId || undefined,
+        storageZoneId: adjustmentForm.storageZoneId || undefined,
         quantity: Number(adjustmentForm.quantity),
         type: adjustmentForm.type,
         reason: adjustmentForm.reason,
@@ -862,12 +1238,14 @@ export default function TransactionsPage() {
   };
 
   const displayReportRows = useMemo<NxtReportRow[]>(() => {
-    const keyword = reportSearch.trim().toLowerCase();
+    const keywords = reportSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
     return reportRows
       .map((row) => ({
         categoryId: row.categoryId,
         categoryName: row.categoryName,
+        productName: row.productName || row.categoryName,
+        sku: row.sku || '-',
         openingQty: row.openingStock,
         openingValue: row.openingValue ?? 0,
         inQty: row.totalIn,
@@ -877,12 +1255,11 @@ export default function TransactionsPage() {
         closingQty: row.closingStock,
         closingValue: row.closingValue ?? 0,
       }))
-      .filter(
-        (row) =>
-          !keyword ||
-          row.categoryName.toLowerCase().includes(keyword) ||
-          (row.categoryId || '').toLowerCase().includes(keyword),
-      );
+      .filter((row) => {
+        if (keywords.length === 0) return true;
+        const searchableText = [row.productName, row.sku, row.categoryName].join(' ').toLowerCase();
+        return keywords.every((kw) => searchableText.includes(kw));
+      });
   }, [reportRows, reportSearch]);
 
   const reportSummary = useMemo(() => {
@@ -911,9 +1288,36 @@ export default function TransactionsPage() {
     );
   }, [displayReportRows]);
 
-  const handleExportReportExcel = () => {
-    const base = `${api.defaults.baseURL || '/api'}`.replace(/\/+$/, '');
-    window.open(`${base}/reports/nxt/export?startDate=${reportStartDate}&endDate=${reportEndDate}`, '_blank');
+  const handleExportReportExcel = async () => {
+    try {
+      const res = await api.get('/reports/nxt/export', {
+        params: { startDate: reportStartDate, endDate: reportEndDate },
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `bao-cao-nxt-${reportStartDate}-${reportEndDate}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      // When responseType is 'blob', error response data is also a blob
+      let message = 'Không thể xuất file Excel. Có thể chưa có dữ liệu trong khoảng thời gian đã chọn.';
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const json = JSON.parse(text);
+          if (json.message) message = json.message;
+        } catch {
+          // ignore parse error
+        }
+      } else if (err.response?.data?.message) {
+        message = err.response.data.message;
+      }
+      alert(message);
+    }
   };
 
   const toggleTransactionSelection = (transactionId: string) => {
@@ -934,41 +1338,297 @@ export default function TransactionsPage() {
     setSelectedTransactionIds([]);
   };
 
-  const openBarcodeDialog = (targetRows: TransactionRow[]) => {
-    const printableRows = targetRows.filter(
-      (row) => row.type === 'STOCK_IN' && row.status === 'ACTIVE',
-    );
+  const getTransactionSectionKind = useCallback(() => {
+    if (activeTab === 'REPORT' || activeTab === 'PRECHECK') return 'ALL';
+    return activeTab;
+  }, [activeTab]);
 
-    if (printableRows.length === 0) {
-      alert('Chi co the in tem cho cac dong nhap kho dang hoat dong.');
+  const buildTransactionExportParams = useCallback((includeFilters: boolean) => {
+    const sectionKind = getTransactionSectionKind();
+    const rawKind = savedFilterHook.filters.kind;
+    const filterKinds = Array.isArray(rawKind)
+      ? (rawKind as string[]).map((k) => k.toUpperCase())
+      : typeof rawKind === 'string' && rawKind ? [rawKind.toUpperCase()] : [];
+
+    if (includeFilters && sectionKind !== 'ALL' && filterKinds.length > 0 && !filterKinds.includes(sectionKind)) {
+      return null;
+    }
+
+    const params: Record<string, string | number> = {
+      kind: sectionKind !== 'ALL' ? sectionKind : includeFilters && filterKinds.length === 1 ? filterKinds[0] : 'ALL',
+      page: 1,
+      limit: 100000,
+    };
+
+    if (!includeFilters) {
+      return params;
+    }
+
+    const { status, categoryName, productName, sku, warehouseInfo, purchasePrice, userName, dateFrom, dateTo } = savedFilterHook.filters;
+
+    const toParam = (v: unknown) => Array.isArray(v) ? (v as string[]).join(',') : (typeof v === 'string' ? v : '');
+
+    if (status && (Array.isArray(status) ? (status as string[]).length > 0 : status)) params.status = toParam(status);
+    if (categoryName && (Array.isArray(categoryName) ? (categoryName as string[]).length > 0 : categoryName)) params.categoryName = toParam(categoryName);
+    if (productName && (Array.isArray(productName) ? (productName as string[]).length > 0 : productName)) params.productName = toParam(productName);
+    if (sku && (Array.isArray(sku) ? (sku as string[]).length > 0 : sku)) params.sku = toParam(sku);
+    if (typeof warehouseInfo === 'string' && warehouseInfo) params.positionLabel = warehouseInfo;
+    if (purchasePrice && (Array.isArray(purchasePrice) ? (purchasePrice as string[]).length > 0 : purchasePrice)) params.purchasePrice = toParam(purchasePrice);
+    if (userName && (Array.isArray(userName) ? (userName as string[]).length > 0 : userName)) params.userName = toParam(userName);
+    if (typeof dateFrom === 'string' && dateFrom) params.dateFrom = dateFrom;
+    if (typeof dateTo === 'string' && dateTo) params.dateTo = dateTo;
+
+    return params;
+  }, [getTransactionSectionKind, savedFilterHook.filters]);
+
+  const exportTransactionRows = useCallback(async (includeFilters: boolean) => {
+    const params = buildTransactionExportParams(includeFilters);
+    if (params === null) {
+      alert('Không có transaction nào khớp với tab hiện tại và bộ lọc đang chọn.');
       return;
     }
 
-    setBarcodeItems(
-      printableRows.map((row) => ({
-        transactionId: row.id,
-        categoryName: row.categoryName,
-        productName: row.productName || row.categoryName,
-        barcodeValue: row.sku || row.categoryId || row.id,
-        salePrice: row.salePrice ?? 0,
-        quantity: 1,
-      })),
-    );
-    setBarcodeDialogOpen(true);
+    setTransactionExporting(true);
+    try {
+      const res = await api.get('/inventory/transactions', { params });
+      const exportRows = res.data.data || [];
+
+      if (exportRows.length === 0) {
+        alert('Không có transaction nào để xuất Excel.');
+        return;
+      }
+
+      const sectionKind = getTransactionSectionKind().toLowerCase();
+      const mode = includeFilters ? 'filtered' : 'all';
+      const today = new Date().toISOString().slice(0, 10);
+      exportTransactionsToExcel(exportRows, `transactions-${sectionKind}-${mode}-${today}.xlsx`);
+      setTransactionExportOpen(false);
+    } catch (error: any) {
+      alert(error.response?.data?.message || 'Không thể xuất Excel transaction');
+    } finally {
+      setTransactionExporting(false);
+    }
+  }, [buildTransactionExportParams, getTransactionSectionKind]);
+
+  const getSkuComboLabel = (combo: SearchSkuComboResult) =>
+    [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name]
+      .filter(Boolean)
+      .join(' - ');
+
+  const getTransactionAttributeLabel = (row: TransactionRow) =>
+    [row.classificationName, row.colorName, row.sizeName, row.materialName]
+      .filter(Boolean)
+      .join(' - ');
+
+  const getEditAttributeLabel = (form: EditTransactionForm) =>
+    [
+      classifications.find((item) => item.id === form.classificationId)?.name,
+      colors.find((item) => item.id === form.colorId)?.name,
+      sizes.find((item) => item.id === form.sizeId)?.name,
+      materials.find((item) => item.id === form.materialId)?.name,
+    ]
+      .filter(Boolean)
+      .join(' - ');
+
+  const buildTransactionReceiptNumber = (row: TransactionRow) => {
+    const prefix = row.type === 'STOCK_IN' ? 'PNK' : 'PXK';
+    const compactId = (row.receiptGroupId || row.id).replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase();
+    return `${prefix}-${compactId || row.id.slice(-6).toUpperCase()}`;
   };
 
-  const updateBarcodeQuantity = (transactionId: string, quantity: number) => {
-    setBarcodeItems((prev) =>
-      prev.map((item) =>
-        item.transactionId === transactionId
-          ? { ...item, quantity: Math.max(quantity || 1, 1) }
-          : item,
+  const getReceiptRows = (row: TransactionRow) => {
+    if (row.receiptGroupId) {
+      return rows
+        .filter((item) => item.receiptGroupId === row.receiptGroupId && item.type === row.type)
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+
+    const anchorTime = new Date(row.createdAt).getTime();
+    return rows
+      .filter((item) => {
+        if (item.type !== row.type) return false;
+        if (item.userName !== row.userName) return false;
+        const delta = Math.abs(new Date(item.createdAt).getTime() - anchorTime);
+        return delta <= 10000;
+      })
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  };
+
+  const buildTransactionPrintHtml = (receiptRows: TransactionRow[]) => {
+    const anchorRow = receiptRows[0];
+    const receiptTitle = anchorRow.type === 'STOCK_IN' ? 'PHIẾU NHẬP KHO' : 'PHIẾU XUẤT KHO';
+    const quantityLabel = anchorRow.type === 'STOCK_IN' ? 'Số lượng nhập' : 'Số lượng xuất';
+    const receiptNumber = buildTransactionReceiptNumber(anchorRow);
+    const actualDateText = formatDateOnly(anchorRow.actualStockDate || anchorRow.createdAt);
+    const totalQuantity = receiptRows.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const categoryText = Array.from(new Set(receiptRows.map((item) => item.categoryName).filter(Boolean))).join(', ') || '-';
+    const locationText = Array.from(
+      new Set(
+        receiptRows
+          .map((item) => [item.warehouseTypeName, item.storageZoneName || item.positionLabel].filter(Boolean).join(' - ') || '-')
+          .filter(Boolean),
       ),
+    ).join('; ');
+    const conditionText = Array.from(new Set(receiptRows.map((item) => item.productConditionName || '-'))).join(', ');
+    const companyName = escapeHtml(generalSettings.storeName || generalSettings.brandName || 'CÔNG TY');
+    const companyAddress = escapeHtml(generalSettings.address || '-');
+    const companyPhone = escapeHtml(generalSettings.phone || '-');
+    const companyEmail = escapeHtml(generalSettings.email || '-');
+    const noteText = escapeHtml(
+      receiptRows
+        .map((item, index) => {
+          const cleanNote = item.note?.trim();
+          if (!cleanNote) return '';
+          const label = getTransactionAttributeLabel(item) || item.productName || item.categoryName || `Dòng ${index + 1}`;
+          return `${label}: ${cleanNote}`;
+        })
+        .filter(Boolean)
+        .join(' | ') || 'Không có ghi chú',
     );
+    const receiptBodyRows = receiptRows
+      .map((item, index) => {
+        const productLabel = getTransactionAttributeLabel(item) || item.productName || item.categoryName || '-';
+        return `
+        <tr>
+          <td class="text-center">${index + 1}</td>
+          <td>${escapeHtml(item.categoryName || '-')}</td>
+          <td>${escapeHtml(productLabel)}</td>
+          <td>${escapeHtml(item.sku || '-')}</td>
+          <td class="text-right">${formatNumber(item.quantity)}</td>
+          <td class="text-center">Cái</td>
+          <td>${escapeHtml(item.productConditionName || '-')}</td>
+        </tr>`;
+      })
+      .join('');
+
+    return `<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>${receiptTitle}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Times New Roman", serif; margin: 24px; color: #111827; font-size: 16px; }
+    .sheet { max-width: 900px; margin: 0 auto; }
+    .top { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 32px; align-items: start; }
+    .company { font-size: 15px; line-height: 1.55; }
+    .company strong { font-size: 18px; text-transform: uppercase; }
+    .form-meta { text-align: center; font-size: 15px; line-height: 1.45; }
+    .form-meta strong { display: block; font-size: 19px; margin-bottom: 6px; }
+    .title { margin-top: 28px; text-align: center; }
+    .title h1 { margin: 0; font-size: 30px; letter-spacing: 0.4px; }
+    .title p { margin: 8px 0 0; font-size: 18px; }
+    .info { margin-top: 20px; font-size: 17px; line-height: 1.7; }
+    .info-row { display: flex; gap: 8px; }
+    .info-label { min-width: 120px; }
+    .info-value { flex: 1; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+    th, td { border: 1px solid #111827; padding: 8px 10px; font-size: 16px; vertical-align: top; }
+    th { text-align: center; background: #f3f4f6; }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .note { margin-top: 10px; font-size: 16px; }
+    .signatures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 40px; text-align: center; }
+    .sign-title { font-weight: 700; text-transform: uppercase; font-size: 15px; }
+    .sign-sub { margin-top: 6px; font-style: italic; }
+    .sign-space { height: 84px; }
+    @media print { body { margin: 0; } .sheet { padding: 12px 16px; } }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="top">
+      <div class="company">
+        <div>Đơn vị:</div>
+        <strong>${companyName}</strong>
+        <div>Địa chỉ: ${companyAddress}</div>
+        <div>Điện thoại: ${companyPhone}</div>
+        <div>Email: ${companyEmail}</div>
+      </div>
+      <div class="form-meta">
+        <strong>Mẫu số: 02 - VT</strong>
+        <div>(Ban hành theo QĐ số 48/2006/QĐ-BTC</div>
+        <div>ngày 14/09/2006 của Bộ trưởng BTC)</div>
+      </div>
+    </div>
+
+    <div class="title">
+      <h1>${receiptTitle}</h1>
+      <p>Ngày: ${escapeHtml(actualDateText)}</p>
+    </div>
+
+    <div class="info">
+      <div class="info-row"><div class="info-label">Số phiếu:</div><div class="info-value"><strong>${escapeHtml(receiptNumber)}</strong> (${receiptRows.length} dòng hàng)</div></div>
+      <div class="info-row"><div class="info-label">Người lập phiếu:</div><div class="info-value">${escapeHtml(anchorRow.userName || '-')}</div></div>
+      <div class="info-row"><div class="info-label">Danh mục:</div><div class="info-value">${escapeHtml(categoryText)}</div></div>
+      <div class="info-row"><div class="info-label">Kho / Thùng:</div><div class="info-value">${escapeHtml(locationText)}</div></div>
+      <div class="info-row"><div class="info-label">Tình trạng hàng:</div><div class="info-value">${escapeHtml(conditionText)}</div></div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 8%;">STT</th>
+          <th style="width: 18%;">Danh mục</th>
+          <th>Sản phẩm</th>
+          <th style="width: 18%;">SKU</th>
+          <th>${quantityLabel}</th>
+          <th style="width: 12%;">Đơn vị</th>
+          <th style="width: 14%;">Tình trạng</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${receiptBodyRows}
+        <tr>
+          <td colspan="4" class="text-right"><strong>Cộng</strong></td>
+          <td class="text-right"><strong>${formatNumber(totalQuantity)}</strong></td>
+          <td class="text-center"><strong>Cái</strong></td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note">Ghi chú: ${noteText}</div>
+
+    <div class="signatures">
+      <div>
+        <div class="sign-title">Thủ trưởng đơn vị</div>
+        <div class="sign-sub">(Ký, họ tên, đóng dấu)</div>
+        <div class="sign-space"></div>
+      </div>
+      <div>
+        <div class="sign-title">Kế toán trưởng</div>
+        <div class="sign-sub">(Ký, họ tên)</div>
+        <div class="sign-space"></div>
+      </div>
+      <div>
+        <div class="sign-title">Người lập phiếu</div>
+        <div class="sign-sub">(Ký, họ tên)</div>
+        <div class="sign-space"></div>
+      </div>
+      <div>
+        <div class="sign-title">${anchorRow.type === 'STOCK_IN' ? 'Người giao hàng' : 'Người nhận hàng'}</div>
+        <div class="sign-sub">(Ký, họ tên)</div>
+        <div class="sign-space"></div>
+      </div>
+    </div>
+  </div>
+  <script>window.onload=()=>{window.focus();window.print();};</script>
+</body>
+</html>`;
   };
 
-  const handlePrintBarcodes = () => {
-    openBarcodePrintWindow(barcodeItems);
+  const handlePrintTransactionReceipt = (row: TransactionRow) => {
+    if (row.kind === 'ADJUSTMENT') {
+      alert('Phiếu điều chỉnh chưa hỗ trợ in mẫu riêng.');
+      return;
+    }
+
+    const receiptRows = getReceiptRows(row);
+    const printWindow = window.open('', '_blank', 'width=960,height=720');
+    if (!printWindow) return;
+    printWindow.document.write(buildTransactionPrintHtml(receiptRows));
+    printWindow.document.close();
   };
 
   const updateTransactionsStatus = async (status: 'ACTIVE' | 'SUSPENDED') => {
@@ -1016,24 +1676,116 @@ export default function TransactionsPage() {
       quantity: row.quantity,
       purchasePrice: row.purchasePrice ?? 0,
       notes: row.note || '',
+      categoryId: row.categoryId || '',
+      skuComboId: row.skuComboId || '',
+      classificationId: row.classificationId || '',
+      colorId: row.colorId || '',
+      sizeId: row.sizeId || '',
+      materialId: row.materialId || '',
+      productConditionId: row.productConditionId || '',
+      storageZoneId: row.storageZoneId || '',
+      warehouseTypeId: row.warehouseTypeId || '',
+      warehousePositionId: row.warehousePositionId || '',
+      actualStockDate: row.actualStockDate ? row.actualStockDate.slice(0, 16) : '',
     });
+    setEditExistingImageUrls(row.imageUrls ?? []);
+    setEditReceiptImages([]);
+    setEditTransactionSelectedProduct(getTransactionAttributeLabel(row) || row.productName || row.sku || '');
+    setEditTransactionSearch('');
+    setEditTransactionSearchResults([]);
+    setEditTransactionSearchOpen(false);
     setEditTransactionOpen(true);
+  };
+
+  const handleEditReceiptImageSelect = async (files: FileList | null) => {
+    if (!files) return;
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (!imageFiles.length) return;
+    const totalExisting = editExistingImageUrls.length + editReceiptImages.length;
+    const slots = MAX_RECEIPT_IMAGES - totalExisting;
+    if (slots <= 0) { alert(`Tối đa ${MAX_RECEIPT_IMAGES} ảnh mỗi phiếu.`); return; }
+    const compressedAll = await Promise.all(
+      imageFiles.slice(0, slots).map(async (file) => {
+        const compressed = await compressReceiptImage(file);
+        return { file: compressed, preview: URL.createObjectURL(compressed) };
+      }),
+    );
+    setEditReceiptImages((prev) => [...prev, ...compressedAll].slice(0, MAX_RECEIPT_IMAGES - editExistingImageUrls.length));
+  };
+
+  const resolveEditTransactionSkuComboId = async () => {
+    const { classificationId, colorId, sizeId, materialId, categoryId, skuComboId } = editTransactionForm;
+    const hasAnyAttribute = [classificationId, colorId, sizeId, materialId].some(Boolean);
+    const hasAllAttributes = [classificationId, colorId, sizeId, materialId].every(Boolean);
+
+    if (!hasAnyAttribute) {
+      return skuComboId || undefined;
+    }
+
+    if (!hasAllAttributes) {
+      throw new Error('Vui lòng chọn đủ Phân loại, Màu sắc, Kích thước và Chất liệu để cập nhật sản phẩm.');
+    }
+
+    const res = await api.post('/input-declarations/sku-combos/find-or-create', {
+      classificationId,
+      colorId,
+      sizeId,
+      materialId,
+      categoryId: categoryId || undefined,
+    });
+
+    return res.data.id as string;
   };
 
   const submitEditTransaction = async () => {
     if (!selectedTransaction) return;
+    const validationErrors: string[] = [];
+    if (editTransactionForm.quantity <= 0) validationErrors.push('Số lượng phải lớn hơn 0');
+    if (selectedTransaction.kind === 'STOCK_IN') {
+      if (!editTransactionForm.productConditionId) validationErrors.push('Vui lòng chọn Tình trạng hàng');
+      if (!editTransactionForm.warehouseTypeId) validationErrors.push('Vui lòng chọn Loại kho');
+      if (!editTransactionForm.storageZoneId) validationErrors.push('Vui lòng chọn Thùng / Khu vực');
+      if (editTransactionForm.storageZoneId && editTransactionForm.warehouseTypeId) {
+        const selZone = storageZones.find((z) => z.id === editTransactionForm.storageZoneId);
+        const conflictName = selZone ? getZoneConflictName(selZone, editTransactionForm.warehouseTypeId) : null;
+        if (conflictName) {
+          validationErrors.push(`Thùng "${selZone?.name}" đang được gán vào loại kho "${conflictName}". Vui lòng chọn thùng khác.`);
+        }
+      }
+    }
+    if (validationErrors.length > 0) { alert(validationErrors.join('\n')); return; }
     try {
+      const resolvedSkuComboId = await resolveEditTransactionSkuComboId();
+      const uploadedNewUrls: string[] = [];
+      for (const img of editReceiptImages) {
+        const formData = new FormData();
+        formData.append('file', img.file);
+        const uploadRes = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+        uploadedNewUrls.push(uploadRes.data.url);
+      }
+      const finalImageUrls = [...editExistingImageUrls, ...uploadedNewUrls];
       await api.patch(`/inventory/transactions/${selectedTransaction.id}`, {
         quantity: editTransactionForm.quantity,
         purchasePrice: editTransactionForm.purchasePrice,
-        notes: editTransactionForm.notes || undefined,
+        categoryId: editTransactionForm.categoryId || null,
+        skuComboId: resolvedSkuComboId || null,
+        productConditionId: editTransactionForm.productConditionId || null,
+        storageZoneId: editTransactionForm.storageZoneId || null,
+        warehousePositionId: editTransactionForm.warehousePositionId || null,
+        warehouseTypeId: editTransactionForm.warehouseTypeId || null,
+        actualStockDate: editTransactionForm.actualStockDate || null,
+        notes: editTransactionForm.notes || null,
+        imageUrls: finalImageUrls,
       });
       setEditTransactionOpen(false);
       setSelectedTransaction(null);
+      setEditTransactionSelectedProduct('');
+      setEditExistingImageUrls([]);
+      setEditReceiptImages([]);
       fetchTransactions();
       fetchMetadata();
     } catch (err: any) {
-      alert(err.response?.data?.message || 'Không thể cập nhật giao dịch');
+      alert(err.response?.data?.message || err.message || 'Không thể cập nhật giao dịch');
     }
   };
 
@@ -1045,13 +1797,16 @@ export default function TransactionsPage() {
     if (!selectedTransaction) return;
 
     try {
+      const sourceZoneName = selectedTransaction.storageZoneName || '-';
+      const targetZone = storageZones.find((z) => z.id === transferForm.targetPositionId);
+      const targetZoneName = targetZone?.name || '-';
+
       await api.post('/inventory/stock-out', {
         categoryId: transferForm.categoryId,
-        warehousePositionId: transferForm.currentPositionId,
+        storageZoneId: selectedTransaction.storageZoneId || undefined,
+        warehousePositionId: selectedTransaction.warehousePositionId || undefined,
         quantity: Number(transferForm.quantity),
-        notes: `Chuyển vị trí từ ${selectedTransferCurrentPosition?.label || selectedTransaction.positionLabel || '-'} sang ${
-          positions.find((position) => position.id === transferForm.targetPositionId)?.label || '-'
-        }`,
+        notes: `Chuyển khu vực từ ${sourceZoneName} sang ${targetZoneName}`,
       });
 
       await api.post('/inventory/stock-in', {
@@ -1060,10 +1815,10 @@ export default function TransactionsPage() {
           selectedTransaction.purchasePrice ?? 1,
         salePrice:
           selectedTransaction.salePrice ?? 1,
-        warehousePositionId: transferForm.targetPositionId,
+        storageZoneId: transferForm.targetPositionId,
         quantity: Number(transferForm.quantity),
         actualStockDate: new Date().toISOString().slice(0, 16),
-        notes: `Nhận chuyển vị trí từ ${selectedTransferCurrentPosition?.label || selectedTransaction.positionLabel || '-'}`,
+        notes: `Nhận chuyển khu vực từ ${sourceZoneName}`,
       });
 
       setTransferOpen(false);
@@ -1086,20 +1841,26 @@ export default function TransactionsPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" className="h-11 rounded-2xl border-emerald-200 px-5 text-emerald-700 hover:bg-emerald-50" onClick={() => {
-              setPickPreliminaryOpen(true);
-            }}>
-              <ArrowDownToLine size={16} />
-              Nhập kho
-            </Button>
-            <Button variant="outline" className="h-11 rounded-2xl border-rose-200 px-5 text-rose-600 hover:bg-rose-50" onClick={() => setStockOutOpen(true)}>
-              <ArrowUpToLine size={16} />
-              Xuất kho
-            </Button>
-            <Button variant="outline" className="h-11 rounded-2xl border-amber-300 px-5 text-amber-600 hover:bg-amber-50" onClick={() => setAdjustmentOpen(true)}>
-              <RefreshCcw size={16} />
-              Điều chỉnh
-            </Button>
+            {canCreateTransactions && (
+              <Button variant="outline" className="h-11 rounded-2xl border-emerald-200 px-5 text-emerald-700 hover:bg-emerald-50" onClick={() => {
+                setPickPreliminaryOpen(true);
+              }}>
+                <ArrowDownToLine size={16} />
+                Nhập kho
+              </Button>
+            )}
+            {canCreateTransactions && (
+              <Button variant="outline" className="h-11 rounded-2xl border-rose-200 px-5 text-rose-600 hover:bg-rose-50" onClick={() => setStockOutOpen(true)}>
+                <ArrowUpToLine size={16} />
+                Xuất kho
+              </Button>
+            )}
+            {canEditTransactions && (
+              <Button variant="outline" className="h-11 rounded-2xl border-amber-300 px-5 text-amber-600 hover:bg-amber-50" onClick={() => setAdjustmentOpen(true)}>
+                <RefreshCcw size={16} />
+                Điều chỉnh
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1232,7 +1993,7 @@ export default function TransactionsPage() {
 
               <div className="border-b border-slate-200 px-6 py-5">
                 <div className="flex flex-wrap items-center gap-4">
-                  <div className="relative w-full max-w-[500px]">
+                  <div className="relative w-full md:max-w-[500px]">
                     <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                     <Input
                       className="h-11 rounded-2xl border-slate-200 pl-12 text-[15px]"
@@ -1296,10 +2057,11 @@ export default function TransactionsPage() {
                     ) : displayReportRows.length > 0 ? (
                       <>
                         {displayReportRows.map((row) => (
-                          <tr key={row.categoryId || row.categoryName} className="bg-white">
+                          <tr key={row.sku + row.categoryId} className="bg-white">
                             <td className="border-b border-r border-slate-200 px-4 py-4 align-top">
-                              <div className="text-[18px] font-semibold text-slate-950">{row.categoryName}</div>
-                              <div className="text-[14px] text-slate-500">{row.categoryId || '-'}</div>
+                              <div className="text-[16px] font-semibold text-slate-950">{row.productName}</div>
+                              <div className="text-[12px] font-mono text-indigo-600">{row.sku}</div>
+                              <div className="text-[12px] text-slate-400">{row.categoryName}</div>
                             </td>
                             <td className="border-b border-r border-slate-200 px-4 py-4 text-center text-[18px] text-slate-700">-</td>
                             <td className="border-b border-r border-slate-200 px-4 py-4 text-center text-[20px] font-semibold text-slate-950">{formatNumber(row.openingQty)}</td>
@@ -1355,13 +2117,19 @@ export default function TransactionsPage() {
                   <div className="space-y-3">
                     {pendingPreliminaryChecks.length > 0 ? pendingPreliminaryChecks.map((item) => (
                       <div key={item.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4">
-                        <div className="space-y-1">
+                        <div className="min-w-0 flex-1 space-y-1">
                           <div className="text-[16px] font-semibold text-slate-950">{getPreliminaryCategoryLabel(item)}</div>
                           <div className="text-[14px] text-slate-500">
                             {formatDateTime(item.createdAt)} • {item.warehouseType?.name || 'Chưa chọn loại kho'} • SL sơ bộ: {formatNumber(item.quantity)}
                           </div>
+                          {item.note && (
+                            <div className="flex items-start gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                              <span className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Ghi chú:</span>
+                              <span className="break-words">{item.note}</span>
+                            </div>
+                          )}
                         </div>
-                        <Button className="h-10 rounded-2xl bg-violet-600 px-4 hover:bg-violet-700" onClick={() => startDetailedCheck(item)}>
+                        <Button className="h-10 shrink-0 rounded-2xl bg-violet-600 px-4 hover:bg-violet-700" onClick={() => startDetailedCheck(item)}>
                           Kiểm tra chi tiết
                         </Button>
                       </div>
@@ -1378,15 +2146,28 @@ export default function TransactionsPage() {
             <SmartFilter
               fields={transactionFilterFields}
               filters={savedFilterHook.filters}
+              draftFilters={savedFilterHook.draftFilters}
               savedFilters={savedFilterHook.savedFilters}
               activeFilterId={savedFilterHook.activeFilterId}
+              hasPendingChanges={savedFilterHook.hasPendingChanges}
               onUpdateFilter={savedFilterHook.updateFilter}
               onRemoveFilter={savedFilterHook.removeFilter}
               onClearFilters={savedFilterHook.clearFilters}
+              onApplyDraftFilters={savedFilterHook.applyDraftFilters}
               onApplyFilter={savedFilterHook.applyFilter}
               onSaveFilter={savedFilterHook.saveFilter}
               onDeleteFilter={savedFilterHook.deleteFilter}
             />
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-slate-500">
+                Hiển thị {formatNumber(filteredRows.length)} transaction
+              </div>
+              <Button variant="outline" className="h-11 rounded-2xl border-violet-200 px-5 text-violet-600 hover:bg-violet-50" onClick={() => setTransactionExportOpen(true)}>
+                <Download size={16} />
+                Xuất Excel
+              </Button>
+            </div>
 
             <Card className="overflow-hidden rounded-[22px]">
               <CardContent className="p-0">
@@ -1403,10 +2184,6 @@ export default function TransactionsPage() {
                       Da chon {selectedTransactionIds.length} giao dich tren trang nay
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button variant="outline" className="h-10 rounded-xl" onClick={() => openBarcodeDialog(selectedRows)}>
-                        <Printer size={15} />
-                        In tem ma vach
-                      </Button>
                       {canSuspendTransactions && (
                         <>
                           <Button variant="outline" className="h-10 rounded-xl" onClick={() => updateTransactionsStatus('SUSPENDED')}>
@@ -1433,6 +2210,7 @@ export default function TransactionsPage() {
                     <div className="spinner" />
                   </div>
                 ) : (
+                  <div className="hidden md:block overflow-x-auto">
                   <Table className="border-none">
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
@@ -1452,10 +2230,10 @@ export default function TransactionsPage() {
                       <TableHead>SKU</TableHead>
                       <TableHead>Kho / Thùng</TableHead>
                       <TableHead className="text-right">Gia nhap</TableHead>
-                      <TableHead className="text-right">Gia ban</TableHead>
                       <TableHead className="text-right">SL</TableHead>
                       <TableHead>Người tạo</TableHead>
                       <TableHead>Ghi chú</TableHead>
+                      <TableHead>Ảnh</TableHead>
                       <TableHead className="text-right">Sua</TableHead>
                       <TableHead className="pr-4 text-right">Xoa</TableHead>
                     </TableRow>
@@ -1464,9 +2242,12 @@ export default function TransactionsPage() {
                     {filteredRows.map((row) => {
                       const isIn = row.kind === 'STOCK_IN';
                       const isAdjustment = row.kind === 'ADJUSTMENT';
+                      const isTransfer = row.kind === 'TRANSFER';
                       const isChecked = selectedTransactionIds.includes(row.id);
-                      const typeLabel = isAdjustment ? 'Điều chỉnh' : isIn ? 'Nhập kho' : 'Xuất kho';
-                      const typeClass = isAdjustment
+                      const typeLabel = isTransfer ? 'Điều chuyển' : isAdjustment ? 'Điều chỉnh' : isIn ? 'Nhập kho' : 'Xuất kho';
+                      const typeClass = isTransfer
+                        ? 'border-sky-200 bg-sky-50 text-sky-700'
+                        : isAdjustment
                         ? 'border-amber-300 bg-amber-50 text-amber-600'
                         : isIn
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
@@ -1520,25 +2301,38 @@ export default function TransactionsPage() {
                           <TableCell className="text-right text-[15px] text-slate-700">
                             {row.purchasePrice !== null ? formatCurrency(row.purchasePrice) : '-'}
                           </TableCell>
-                          <TableCell className="text-right text-[15px] text-slate-700">
-                            {row.salePrice !== null ? formatCurrency(row.salePrice) : '-'}
-                          </TableCell>
                           <TableCell className={`text-right text-[18px] font-semibold ${row.signedQuantity >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {row.signedQuantity >= 0 ? '+' : ''}
                             {formatNumber(row.signedQuantity)}
                           </TableCell>
                           <TableCell className="text-[15px] text-slate-600">{row.userName}</TableCell>
                           <TableCell className="text-[15px] italic text-slate-500">{row.note || '-'}</TableCell>
+                          <TableCell>
+                            {row.imageUrls?.length > 0 ? (
+                              <button
+                                type="button"
+                                className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-100"
+                                onClick={() => setTxImageView({ urls: row.imageUrls, index: 0 })}
+                              >
+                                <ImageIcon size={12} />
+                                {row.imageUrls.length}
+                              </button>
+                            ) : (
+                              <span className="text-xs text-slate-400">—</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              <Button type="button" variant="outline" className="h-9 rounded-xl" onClick={() => handleEditTransaction(row)}>
-                                <Pencil size={15} />
-                              </Button>
+                              {canEditTransactions && (
+                                <Button type="button" variant="outline" className="h-9 rounded-xl" onClick={() => handleEditTransaction(row)}>
+                                  <Pencil size={15} />
+                                </Button>
+                              )}
                               <Button type="button" variant="outline" className="h-9 rounded-xl" onClick={() => handleViewProductDetail(row)}>
                                 <Eye size={15} />
                               </Button>
-                              {row.type === 'STOCK_IN' && (
-                                <Button type="button" variant="outline" className="h-9 rounded-xl" onClick={() => openBarcodeDialog([row])}>
+                              {row.kind !== 'ADJUSTMENT' && row.kind !== 'TRANSFER' && (
+                                <Button type="button" variant="outline" className="h-9 rounded-xl" onClick={() => handlePrintTransactionReceipt(row)}>
                                   <Printer size={15} />
                                 </Button>
                               )}
@@ -1587,7 +2381,128 @@ export default function TransactionsPage() {
                     )}
                   </TableBody>
                   </Table>
+                  </div>
                 )}
+
+                {/* Mobile card list */}
+                {!isLoading && (
+                  <div className="md:hidden divide-y divide-slate-100">
+                    {filteredRows.length === 0 ? (
+                      <div className="py-14 text-center text-slate-500">Chưa có giao dịch phù hợp.</div>
+                    ) : filteredRows.map((row) => {
+                      const mIsIn = row.kind === 'STOCK_IN';
+                      const mIsAdj = row.kind === 'ADJUSTMENT';
+                      const mIsTrf = row.kind === 'TRANSFER';
+                      const mChecked = selectedTransactionIds.includes(row.id);
+                      const mTypeLabel = mIsTrf ? 'Điều chuyển' : mIsAdj ? 'Điều chỉnh' : mIsIn ? 'Nhập kho' : 'Xuất kho';
+                      const mTypeClass = mIsTrf ? 'border-sky-200 bg-sky-50 text-sky-700' : mIsAdj ? 'border-amber-300 bg-amber-50 text-amber-600' : mIsIn ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-rose-200 bg-rose-50 text-rose-600';
+                      const mStatusClass = row.status === 'ACTIVE' ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-amber-200 bg-amber-50 text-amber-700';
+                      return (
+                        <div key={row.id} className={`px-4 py-4 ${mChecked ? 'bg-indigo-50' : ''}`}>
+                          <div className="flex items-start gap-3">
+                            <input type="checkbox" className="mt-1 shrink-0" checked={mChecked} onChange={() => toggleTransactionSelection(row.id)} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium ${mTypeClass}`}>{mTypeLabel}</span>
+                                  <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium ${mStatusClass}`}>{row.status === 'ACTIVE' ? 'Đang GD' : 'Ngưng GD'}</span>
+                                </div>
+                                <div className={`text-xl font-bold tabular-nums shrink-0 ${row.signedQuantity >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  {row.signedQuantity >= 0 ? '+' : ''}{formatNumber(row.signedQuantity)}
+                                </div>
+                              </div>
+                              <div className="mb-2">
+                                <div className="font-semibold text-slate-900">{row.categoryName}</div>
+                                {row.productName && <div className="text-sm text-slate-600">{row.productName}</div>}
+                                {row.sku && <div className="text-xs font-mono text-indigo-600">{row.sku}</div>}
+                              </div>
+                              <div className="space-y-0.5 text-xs text-slate-500">
+                                <div className="flex gap-2"><span className="w-16 shrink-0">Tạo lúc</span><span>{formatDateTime(row.createdAt)}</span></div>
+                                {(row.warehouseTypeName || row.storageZoneName) && (
+                                  <div className="flex gap-2"><span className="w-16 shrink-0">Kho</span><span>{[row.warehouseTypeName, row.storageZoneName].filter(Boolean).join(' / ')}</span></div>
+                                )}
+                                {row.purchasePrice !== null && (
+                                  <div className="flex gap-2"><span className="w-16 shrink-0">Giá nhập</span><span>{formatCurrency(row.purchasePrice)}</span></div>
+                                )}
+                                <div className="flex gap-2"><span className="w-16 shrink-0">Người tạo</span><span>{row.userName}</span></div>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {canEditTransactions && (
+                                  <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => handleEditTransaction(row)}>
+                                    <Pencil size={13} /> Sửa
+                                  </Button>
+                                )}
+                                <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => handleViewProductDetail(row)}>
+                                  <Eye size={13} /> Chi tiết
+                                </Button>
+                                {row.imageUrls?.length > 0 && (
+                                  <Button type="button" variant="outline" size="sm" className="h-8 border-violet-200 text-violet-700" onClick={() => setTxImageView({ urls: row.imageUrls, index: 0 })}>
+                                    <ImageIcon size={13} /> Ảnh ({row.imageUrls.length})
+                                  </Button>
+                                )}
+                                {row.kind !== 'ADJUSTMENT' && row.kind !== 'TRANSFER' && (
+                                  <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => handlePrintTransactionReceipt(row)}>
+                                    <Printer size={13} /> In
+                                  </Button>
+                                )}
+                                {canDeleteTransactions && (
+                                  <Button type="button" variant="outline" size="sm" className="h-8 border-rose-200 text-rose-600 hover:bg-rose-50"
+                                    onClick={async () => {
+                                      const prevSel = selectedTransactionIds;
+                                      setSelectedTransactionIds([row.id]);
+                                      if (window.confirm('Xóa giao dịch này?')) {
+                                        try {
+                                          await api.delete('/inventory/transactions', { data: { transactionIds: [row.id] } });
+                                          await fetchTransactions();
+                                          await fetchMetadata();
+                                          if (activeTab === 'REPORT') await fetchReport();
+                                        } catch (err: any) {
+                                          alert(err.response?.data?.message || 'Không thể xóa giao dịch');
+                                        }
+                                      }
+                                      setSelectedTransactionIds(prevSel);
+                                    }}
+                                  >
+                                    <Trash2 size={13} /> Xóa
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Pagination */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <span>Hiển thị</span>
+                    <select
+                      className="form-select page-size-select h-9 w-20 text-sm"
+                      value={txPageSize}
+                      onChange={(e) => { setTxPageSize(Number(e.target.value)); setTxPage(1); }}
+                    >
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                    </select>
+                    <span>/ trang • Tổng {txTotal} giao dịch</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" disabled={txPage <= 1} onClick={() => fetchTransactions(txPage - 1)}>
+                      Trước
+                    </Button>
+                    <span className="px-3 text-sm font-medium text-slate-700">
+                      Trang {txPage} / {Math.ceil(txTotal / txPageSize) || 1}
+                    </span>
+                    <Button variant="outline" size="sm" disabled={txPage >= Math.ceil(txTotal / txPageSize)} onClick={() => fetchTransactions(txPage + 1)}>
+                      Sau
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -1603,7 +2518,7 @@ export default function TransactionsPage() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Danh mục sản phẩm nhận</Label>
               <select className="form-select" value={preliminaryForm.categoryId} onChange={(e) => setPreliminaryForm((prev) => ({ ...prev, categoryId: e.target.value }))}>
@@ -1666,6 +2581,15 @@ export default function TransactionsPage() {
         </DialogContent>
       </Dialog>
 
+      <TransactionExportDialog
+        open={transactionExportOpen}
+        onOpenChange={setTransactionExportOpen}
+        title="Xuất Excel Transaction"
+        onExportAll={() => exportTransactionRows(false)}
+        onExportFiltered={() => exportTransactionRows(true)}
+        isExporting={transactionExporting}
+      />
+
       <Dialog
         open={productDetailOpen}
         onOpenChange={(open) => {
@@ -1687,7 +2611,7 @@ export default function TransactionsPage() {
             <div className="space-y-4">
               <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
                 <div className="text-[20px] font-semibold text-slate-950">
-                  {selectedTransaction.productName || selectedTransaction.categoryName}
+                  {getTransactionAttributeLabel(selectedTransaction) || selectedTransaction.productName || selectedTransaction.categoryName}
                 </div>
                 {selectedTransaction.sku && (
                   <div className="mt-1 text-sm font-mono text-indigo-600">{selectedTransaction.sku}</div>
@@ -1695,7 +2619,23 @@ export default function TransactionsPage() {
                 <div className="mt-1 text-sm text-slate-500">Danh mục: {selectedTransaction.categoryName}</div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-medium text-slate-500">Phân loại</div>
+                  <div className="text-[16px] font-semibold text-slate-950">{selectedTransaction.classificationName || '-'}</div>
+                </div>
+                <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-medium text-slate-500">Màu sắc</div>
+                  <div className="text-[16px] font-semibold text-slate-950">{selectedTransaction.colorName || '-'}</div>
+                </div>
+                <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-medium text-slate-500">Kích thước</div>
+                  <div className="text-[16px] font-semibold text-slate-950">{selectedTransaction.sizeName || '-'}</div>
+                </div>
+                <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-medium text-slate-500">Chất liệu</div>
+                  <div className="text-[16px] font-semibold text-slate-950">{selectedTransaction.materialName || '-'}</div>
+                </div>
                 <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
                   <div className="text-sm font-medium text-slate-500">Loại giao dịch</div>
                   <div className="text-[16px] font-semibold text-slate-950">
@@ -1720,6 +2660,14 @@ export default function TransactionsPage() {
                 <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
                   <div className="text-sm font-medium text-slate-500">Thùng / Khu vực</div>
                   <div className="text-[16px] font-semibold text-slate-950">{selectedTransaction.storageZoneName || '-'}</div>
+                </div>
+                <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-medium text-slate-500">Tình trạng hàng</div>
+                  <div className="text-[16px] font-semibold text-slate-950">{selectedTransaction.productConditionName || '-'}</div>
+                </div>
+                <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-medium text-slate-500">Vị trí kho</div>
+                  <div className="text-[16px] font-semibold text-slate-950">{selectedTransaction.positionLabel || '-'}</div>
                 </div>
                 <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
                   <div className="text-sm font-medium text-slate-500">Người tạo</div>
@@ -1776,35 +2724,29 @@ export default function TransactionsPage() {
 
           {selectedTransaction && (
             <div className="space-y-5">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
                   <div className="text-sm font-medium text-slate-500">Danh mục hiện tại</div>
                   <div className="text-[17px] font-semibold text-slate-950">{selectedTransaction.categoryName}</div>
                 </div>
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                  <div className="text-sm font-medium text-slate-500">Vị trí hiện tại</div>
-                  <div className="text-[17px] font-semibold text-slate-950">{selectedTransferCurrentPosition?.label || selectedTransaction.positionLabel || '-'}</div>
-                  <div className="text-sm text-slate-500">Tồn hiện tại: {formatNumber(selectedTransferCurrentPosition?.currentStock || 0)}</div>
+                  <div className="text-sm font-medium text-slate-500">Thùng / Khu vực hiện tại</div>
+                  <div className="text-[17px] font-semibold text-slate-950">{selectedTransferCurrentZone?.name || selectedTransaction.storageZoneName || '-'}</div>
+                  <div className="text-sm text-slate-500">Tồn hiện tại: {formatNumber(selectedTransferCurrentZone?.currentStock || 0)}</div>
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>Vị trí chuyển đến</Label>
-                  <select
-                    className="form-select"
+                  <Label>Thùng / Khu vực chuyển đến</Label>
+                  <SearchableSelect
+                    options={storageZones
+                      .filter((zone) => zone.id !== transferForm.currentPositionId)
+                      .map((zone) => ({ value: zone.id, label: zone.name }))}
                     value={transferForm.targetPositionId}
-                    onChange={(e) => setTransferForm((prev) => ({ ...prev, targetPositionId: e.target.value }))}
-                  >
-                    <option value="">Chọn vị trí chuyển đến</option>
-                    {positions
-                      .filter((position) => position.id !== transferForm.currentPositionId)
-                      .map((position) => (
-                        <option key={position.id} value={position.id}>
-                          {position.label}
-                        </option>
-                      ))}
-                  </select>
+                    onChange={(v) => setTransferForm((prev) => ({ ...prev, targetPositionId: v }))}
+                    placeholder="Chọn thùng / khu vực chuyển đến"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -1812,20 +2754,20 @@ export default function TransactionsPage() {
                   <Input
                     type="number"
                     min={1}
-                    max={selectedTransferCurrentPosition?.currentStock || 1}
+                    max={selectedTransferCurrentZone?.currentStock || 1}
                     value={transferForm.quantity}
                     onChange={(e) =>
                       setTransferForm((prev) => ({
                         ...prev,
                         quantity: Math.min(
                           Math.max(Number(e.target.value) || 1, 1),
-                          Math.max(selectedTransferCurrentPosition?.currentStock || 1, 1),
+                          Math.max(selectedTransferCurrentZone?.currentStock || 1, 1),
                         ),
                       }))
                     }
                   />
                   <p className="text-xs text-slate-500">
-                    Chỉ được chuyển tối đa {formatNumber(selectedTransferCurrentPosition?.currentStock || 0)} sản phẩm từ vị trí hiện tại.
+                    Chỉ được chuyển tối đa {formatNumber(selectedTransferCurrentZone?.currentStock || 0)} sản phẩm từ khu vực hiện tại.
                   </p>
                 </div>
               </div>
@@ -1851,54 +2793,18 @@ export default function TransactionsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={barcodeDialogOpen} onOpenChange={setBarcodeDialogOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Printer size={18} />
-              In tem mã vạch sản phẩm
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {barcodeItems.map((item) => (
-              <div key={item.transactionId} className="grid gap-4 rounded-2xl border border-slate-200 p-4 md:grid-cols-[1.6fr,1fr,140px]">
-                <div>
-                  <div className="font-semibold text-slate-900">{item.productName}</div>
-                  <div className="mt-1 text-xs font-mono text-indigo-600">{item.barcodeValue}</div>
-                  <div className="mt-1 text-sm font-medium text-slate-700">{formatCurrency(item.salePrice)}</div>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center">
-                  <div className="text-xs uppercase tracking-wide text-slate-400">Mẫu tem</div>
-                  <div className="mt-2 text-sm text-slate-700">Tên SP + Barcode SKU + Giá bán</div>
-                </div>
-                <div className="space-y-2">
-                  <Label>So luong tem</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={item.quantity}
-                    onChange={(e) => updateBarcodeQuantity(item.transactionId, Number(e.target.value))}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBarcodeDialogOpen(false)}>
-              Huy
-            </Button>
-            <Button onClick={handlePrintBarcodes}>
-              <Printer size={15} />
-              In tem
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Edit Transaction Dialog */}
-      <Dialog open={editTransactionOpen} onOpenChange={setEditTransactionOpen}>
+      <Dialog open={editTransactionOpen} onOpenChange={(open) => {
+        setEditTransactionOpen(open);
+        if (!open) {
+          setEditTransactionSearch('');
+          setEditTransactionSearchResults([]);
+          setEditTransactionSearchOpen(false);
+          setEditTransactionSelectedProduct('');
+          setEditExistingImageUrls([]);
+          setEditReceiptImages([]);
+        }
+      }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1909,6 +2815,11 @@ export default function TransactionsPage() {
 
           {selectedTransaction && (
             <div className="space-y-4">
+              {(() => {
+                const editAttributeLabel = getEditAttributeLabel(editTransactionForm);
+
+                return (
+                  <>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="font-semibold text-slate-900">{selectedTransaction.categoryName}</div>
                 {selectedTransaction.productName && (
@@ -1923,6 +2834,129 @@ export default function TransactionsPage() {
                 </div>
               </div>
 
+              <div className="space-y-2 relative">
+                <Label>Sản phẩm / SKU</Label>
+                <Input
+                  type="text"
+                  placeholder="Tìm lại sản phẩm để đổi màu, size, chất liệu..."
+                  value={editTransactionSearch}
+                  onChange={(e) => {
+                    setEditTransactionSearch(e.target.value);
+                    searchSkuCombos(e.target.value, 'edit');
+                  }}
+                  onFocus={() => { if (editTransactionSearchResults.length > 0) setEditTransactionSearchOpen(true); }}
+                />
+                {editTransactionSelectedProduct && (
+                  <div className="mt-1 flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
+                    <span>{editTransactionSelectedProduct}</span>
+                    <button
+                      type="button"
+                      className="ml-2 text-indigo-400 hover:text-indigo-700"
+                      onClick={() => {
+                        setEditTransactionSelectedProduct('');
+                        setEditTransactionForm((prev) => ({
+                          ...prev,
+                          skuComboId: '',
+                          categoryId: selectedTransaction.categoryId || '',
+                          classificationId: '',
+                          colorId: '',
+                          sizeId: '',
+                          materialId: '',
+                        }));
+                        setEditTransactionSearch('');
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+                {editTransactionSearchOpen && editTransactionSearchResults.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                    {editTransactionSearchResults
+                      .filter((combo) => !selectedTransaction.categoryId || combo.categoryId === selectedTransaction.categoryId)
+                      .map((combo) => {
+                        const productLabel = getSkuComboLabel(combo);
+                        return (
+                          <button
+                            key={combo.id}
+                            type="button"
+                            className="w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
+                            onClick={() => {
+                              setEditTransactionForm((prev) => ({
+                                ...prev,
+                                skuComboId: combo.id,
+                                categoryId: combo.categoryId || prev.categoryId,
+                                classificationId: combo.classification?.id || '',
+                                colorId: combo.color?.id || '',
+                                sizeId: combo.size?.id || '',
+                                materialId: combo.material?.id || '',
+                              }));
+                              setEditTransactionSelectedProduct(productLabel + (combo.categoryName ? ` (${combo.categoryName})` : ''));
+                              setEditTransactionSearch('');
+                              setEditTransactionSearchOpen(false);
+                              setEditTransactionSearchResults([]);
+                            }}
+                          >
+                            <div className="text-sm font-medium text-slate-900">{productLabel}</div>
+                            <div className="text-xs text-slate-500">
+                              <span className="font-mono">{combo.compositeSku}</span>
+                              {combo.categoryName && <span className="ml-2">• {combo.categoryName}</span>}
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Phân loại</Label>
+                  <SearchableSelect
+                    options={classifications.map((item) => ({ value: item.id, label: item.name }))}
+                    value={editTransactionForm.classificationId}
+                    onChange={(v) => setEditTransactionForm((prev) => ({ ...prev, classificationId: v, skuComboId: '' }))}
+                    placeholder="Chọn phân loại"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Màu sắc</Label>
+                  <SearchableSelect
+                    options={colors.map((item) => ({ value: item.id, label: item.name }))}
+                    value={editTransactionForm.colorId}
+                    onChange={(v) => setEditTransactionForm((prev) => ({ ...prev, colorId: v, skuComboId: '' }))}
+                    placeholder="Chọn màu sắc"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Kích thước</Label>
+                  <SearchableSelect
+                    options={sizes.map((item) => ({ value: item.id, label: item.name }))}
+                    value={editTransactionForm.sizeId}
+                    onChange={(v) => setEditTransactionForm((prev) => ({ ...prev, sizeId: v, skuComboId: '' }))}
+                    placeholder="Chọn kích thước"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Chất liệu</Label>
+                  <SearchableSelect
+                    options={materials.map((item) => ({ value: item.id, label: item.name }))}
+                    value={editTransactionForm.materialId}
+                    onChange={(v) => setEditTransactionForm((prev) => ({ ...prev, materialId: v, skuComboId: '' }))}
+                    placeholder="Chọn chất liệu"
+                  />
+                </div>
+              </div>
+
+              {(editAttributeLabel || editTransactionSelectedProduct) && (
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.05em] text-indigo-500">Biến thể đang chọn</div>
+                  <div className="mt-1 text-sm font-medium text-indigo-950">
+                    {editAttributeLabel || editTransactionSelectedProduct}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label>Số lượng</Label>
                 <Input
@@ -1931,6 +2965,78 @@ export default function TransactionsPage() {
                   value={editTransactionForm.quantity}
                   onChange={(e) => setEditTransactionForm((prev) => ({ ...prev, quantity: Number(e.target.value) || 0 }))}
                 />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Tình trạng hàng{selectedTransaction.kind === 'STOCK_IN' && <span className="ml-0.5 text-red-500">*</span>}</Label>
+                  <SearchableSelect
+                    options={productConditions.map((item) => ({ value: item.id, label: item.name }))}
+                    value={editTransactionForm.productConditionId}
+                    onChange={(v) => setEditTransactionForm((prev) => ({ ...prev, productConditionId: v }))}
+                    placeholder="Chọn tình trạng"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Loại kho{selectedTransaction.kind === 'STOCK_IN' && <span className="ml-0.5 text-red-500">*</span>}</Label>
+                  <SearchableSelect
+                    options={warehouseTypes.map((item) => ({ value: item.id, label: item.name }))}
+                    value={editTransactionForm.warehouseTypeId}
+                    onChange={(v) => setEditTransactionForm((prev) => ({
+                      ...prev,
+                      warehouseTypeId: v,
+                      storageZoneId: '',
+                      warehousePositionId: '',
+                    }))}
+                    placeholder={selectedTransaction.warehouseTypeName || 'Chọn loại kho'}
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Thùng / Khu vực{selectedTransaction.kind === 'STOCK_IN' && <span className="ml-0.5 text-red-500">*</span>}</Label>
+                  <SearchableSelect
+                    options={getZonesForWarehouseType(editTransactionForm.warehouseTypeId)
+                      .map((zone) => {
+                        const conflictTypeName = getZoneConflictName(zone, editTransactionForm.warehouseTypeId);
+                        if (conflictTypeName) {
+                          return {
+                            value: zone.id,
+                            label: `${zone.name} (Đang ở ${conflictTypeName} · Không thể chọn)`,
+                            disabled: true,
+                          };
+                        }
+                        const assignedLabel = zone.warehouseTypeId ? ` · Đã gán` : ` · Chưa gán kho`;
+                        return {
+                          value: zone.id,
+                          label: `${zone.name} (Còn ${formatNumber(getStorageZoneRemaining(zone))}/${formatNumber(zone.maxCapacity)}${assignedLabel})`,
+                        };
+                      })}
+                    value={editTransactionForm.storageZoneId}
+                    onChange={(v) => {
+                      const zone = storageZones.find((z) => z.id === v);
+                      const wt = warehouseTypes.find((t) => t.id === editTransactionForm.warehouseTypeId);
+                      const layout = wt ? layouts.find((l) => l.name.toLowerCase() === wt.name.toLowerCase()) : undefined;
+                      const matchedPosition = layout
+                        ? layout.positions.find((p) => p.label.toLowerCase() === (zone?.name || '').toLowerCase())
+                        : positions.find((p) => p.label.toLowerCase() === (zone?.name || '').toLowerCase());
+                      setEditTransactionForm((prev) => ({
+                        ...prev,
+                        storageZoneId: v,
+                        warehousePositionId: matchedPosition?.id || '',
+                      }));
+                    }}
+                    placeholder="Chọn khu vực"
+                  />
+                  {(() => {
+                    const selZone = storageZones.find((z) => z.id === editTransactionForm.storageZoneId);
+                    const conflict = selZone ? getZoneConflictName(selZone, editTransactionForm.warehouseTypeId) : null;
+                    if (!conflict) return null;
+                    return (
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                        Thùng &ldquo;{selZone?.name}&rdquo; đang được gán vào loại kho &ldquo;{conflict}&rdquo;. Vui lòng chọn thùng khác.
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -1948,6 +3054,15 @@ export default function TransactionsPage() {
               </div>
 
               <div className="space-y-2">
+                <Label>Thời gian nhập / xuất thực tế</Label>
+                <Input
+                  type="datetime-local"
+                  value={editTransactionForm.actualStockDate}
+                  onChange={(e) => setEditTransactionForm((prev) => ({ ...prev, actualStockDate: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-2">
                 <Label>Ghi chú</Label>
                 <textarea
                   className="form-control min-h-[88px] py-3"
@@ -1956,12 +3071,89 @@ export default function TransactionsPage() {
                   placeholder="Ghi chú"
                 />
               </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>
+                    Ảnh chứng từ
+                    {(editExistingImageUrls.length + editReceiptImages.length) > 0 && (
+                      <span className="ml-1.5 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
+                        {editExistingImageUrls.length + editReceiptImages.length}/{MAX_RECEIPT_IMAGES}
+                      </span>
+                    )}
+                  </Label>
+                  {(editExistingImageUrls.length + editReceiptImages.length) < MAX_RECEIPT_IMAGES && (
+                    <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
+                      <Upload size={13} />
+                      Thêm ảnh
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void handleEditReceiptImageSelect(e.target.files); e.target.value = ''; }} />
+                    </label>
+                  )}
+                </div>
+                {(editExistingImageUrls.length + editReceiptImages.length) === 0 ? (
+                  <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-6 text-sm text-slate-400 hover:border-violet-300 hover:text-violet-500">
+                    <Upload size={24} />
+                    <span className="font-medium">Nhấn để chọn ảnh</span>
+                    <span className="text-xs">JPG · PNG · WEBP · Tối đa {MAX_RECEIPT_IMAGES} ảnh</span>
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void handleEditReceiptImageSelect(e.target.files); e.target.value = ''; }} />
+                  </label>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {editExistingImageUrls.map((url, idx) => (
+                      <div key={`existing-${idx}`} className="group relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                        <img src={url} alt={`Ảnh ${idx + 1}`} className="h-full w-full object-cover transition-opacity group-hover:opacity-75" />
+                        <button
+                          type="button"
+                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
+                          onClick={() => setEditExistingImageUrls((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          <X size={11} />
+                        </button>
+                        <div className="absolute bottom-1 left-1 rounded bg-black/50 px-1 text-[10px] text-white">{idx + 1}</div>
+                      </div>
+                    ))}
+                    {editReceiptImages.map((img, idx) => (
+                      <div key={`new-${idx}`} className="group relative aspect-square overflow-hidden rounded-xl border border-violet-200 bg-violet-50">
+                        <img src={img.preview} alt={`Ảnh mới ${idx + 1}`} className="h-full w-full object-cover transition-opacity group-hover:opacity-75" />
+                        <button
+                          type="button"
+                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
+                          onClick={() => setEditReceiptImages((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          <X size={11} />
+                        </button>
+                        <div className="absolute bottom-1 left-1 rounded bg-violet-600/70 px-1 text-[10px] text-white">Mới</div>
+                      </div>
+                    ))}
+                    {(editExistingImageUrls.length + editReceiptImages.length) < MAX_RECEIPT_IMAGES && (
+                      <label className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-violet-300 hover:text-violet-500">
+                        <Upload size={18} />
+                        <span className="text-xs">Thêm</span>
+                        <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void handleEditReceiptImageSelect(e.target.files); e.target.value = ''; }} />
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTransactionOpen(false)}>Hủy</Button>
-            <Button onClick={submitEditTransaction} disabled={editTransactionForm.quantity <= 0}>
+            <Button
+              onClick={submitEditTransaction}
+              disabled={
+                editTransactionForm.quantity <= 0 ||
+                (selectedTransaction?.kind === 'STOCK_IN' && (
+                  !editTransactionForm.productConditionId ||
+                  !editTransactionForm.warehouseTypeId ||
+                  !editTransactionForm.storageZoneId
+                ))
+              }
+            >
               Lưu thay đổi
             </Button>
           </DialogFooter>
@@ -1970,12 +3162,13 @@ export default function TransactionsPage() {
 
       {/* Pick Preliminary Check Dialog */}
       <Dialog open={pickPreliminaryOpen} onOpenChange={setPickPreliminaryOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100vh-1rem)] max-w-2xl flex-col overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)]">
+          <DialogHeader className="px-4 pb-0 pt-4 sm:px-6 sm:pt-6">
             <DialogTitle>Chọn phiếu kiểm sơ bộ để nhập kho</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-slate-500">Chọn phiếu kiểm sơ bộ đang chờ xử lý để bắt đầu nhập kho chi tiết.</p>
-          <div className="max-h-[400px] space-y-2 overflow-auto">
+          <p className="px-4 text-sm text-slate-500 sm:px-6">Chọn phiếu kiểm sơ bộ đang chờ xử lý để bắt đầu nhập kho chi tiết.</p>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-2 sm:px-6">
+            <div className="space-y-2 py-2">
             {pendingPreliminaryChecks.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-slate-500">
                 Không có phiếu kiểm sơ bộ nào đang chờ xử lý.
@@ -1992,23 +3185,30 @@ export default function TransactionsPage() {
                     openStockInModal(check);
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
                       <div className="font-semibold text-slate-900">{getPreliminaryCategoryLabel(check)}</div>
                       <div className="mt-1 text-sm text-slate-500">
                         {check.warehouseType?.name || '-'} • Số lượng: {formatNumber(check.quantity)}
                       </div>
+                      {check.note && (
+                        <div className="mt-2 flex items-start gap-1.5 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                          <span className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Ghi chú:</span>
+                          <span className="text-sm text-slate-700 break-words">{check.note}</span>
+                        </div>
+                      )}
                     </div>
-                    <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600">
+                    <span className="inline-flex shrink-0 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600">
                       Chờ kiểm tra
                     </span>
                   </div>
                 </button>
               ))
             )}
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPickPreliminaryOpen(false)}>Đóng</Button>
+          <DialogFooter className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setPickPreliminaryOpen(false)}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2019,344 +3219,631 @@ export default function TransactionsPage() {
           resetStockInModal();
         }
       }}>
-        <DialogContent className="max-w-5xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+        <DialogContent className="flex max-h-[calc(100vh-1rem)] max-w-5xl flex-col overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)]">
+          <DialogHeader className="px-4 pb-0 pt-4 sm:px-6 sm:pt-6">
+            <DialogTitle className="flex items-center gap-2 pr-10">
               <PackagePlus size={18} />
               Nhập hàng vào kho theo nhiều dòng
             </DialogTitle>
           </DialogHeader>
 
-          {selectedPreliminaryCheck && (
-            <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-800">
-              <div className="font-semibold">Đang xử lý từ kiểm sơ bộ</div>
-              <div className="mt-1">
-                {getPreliminaryCategoryLabel(selectedPreliminaryCheck)} • {selectedPreliminaryCheck.warehouseType?.name || 'Chưa chọn loại kho'} • Tổng số lượng chi tiết phải khớp: {formatNumber(selectedPreliminaryCheck.quantity)}
-              </div>
-            </div>
-          )}
-
-          <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4 md:grid-cols-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Số dòng</p>
-              <p className="mt-1 text-sm font-medium text-slate-800">{stockInLines.length} dòng nhập kho</p>
-            </div>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Tổng số lượng</p>
-              <p className={`mt-1 text-sm font-medium ${selectedPreliminaryCheck && stockInTotalQuantity !== selectedPreliminaryCheck.quantity ? 'text-rose-600' : 'text-violet-700'}`}>
-                {formatNumber(stockInTotalQuantity)}
-                {selectedPreliminaryCheck && stockInTotalQuantity !== selectedPreliminaryCheck.quantity && (
-                  <span className="ml-2 text-xs font-normal">
-                    (Cần đúng {formatNumber(selectedPreliminaryCheck.quantity)} — {stockInTotalQuantity < selectedPreliminaryCheck.quantity ? `thiếu ${formatNumber(selectedPreliminaryCheck.quantity - stockInTotalQuantity)}` : `thừa ${formatNumber(stockInTotalQuantity - selectedPreliminaryCheck.quantity)}`})
-                  </span>
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Cách gửi</p>
-              <p className="mt-1 text-sm font-medium text-slate-800">{stockInLines.length > 1 ? 'Batch stock-in' : 'Single stock-in'}</p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {stockInLines.map((line, index) => {
-              const selectedCategory = categories.find((category) => category.id === line.categoryId);
-              const selectedClassification = classifications.find((c) => c.id === line.classificationId);
-              const selectedColor = colors.find((c) => c.id === line.colorId);
-              const selectedSize = sizes.find((c) => c.id === line.sizeId);
-              const selectedMaterial = materials.find((c) => c.id === line.materialId);
-
-              const productName = [selectedClassification?.name, selectedColor?.name, selectedSize?.name, selectedMaterial?.name].filter(Boolean).join(' - ');
-
-              const generateSkuPreview = () => {
-                if (!selectedCategory || !selectedClassification || !selectedColor || !selectedSize || !selectedMaterial) return '';
-                const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-                return `${norm(selectedCategory.name).slice(0, 2)}${norm(selectedClassification.name).slice(0, 2)}${norm(selectedColor.name).slice(0, 2)}${norm(selectedSize.name).slice(0, 2)}${norm(selectedMaterial.name).slice(0, 2)}`;
-              };
-              const skuPreview = generateSkuPreview();
-
-              return (
-                <div key={line.id} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[16px] font-semibold text-slate-950">Dòng nhập {index + 1}</div>
-                      <div className="text-sm text-slate-500">
-                        {productName || (selectedCategory ? selectedCategory.name : 'Chưa chọn danh mục')}
-                      </div>
-                      {skuPreview && (
-                        <div className="text-xs text-indigo-600 font-mono mt-0.5">SKU: {skuPreview}</div>
-                      )}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-9 rounded-xl border-rose-200 text-rose-600 hover:bg-rose-50"
-                      onClick={() => removeStockInLine(line.id)}
-                      disabled={stockInLines.length === 1}
-                    >
-                      <Trash2 size={15} />
-                      Xóa dòng
-                    </Button>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <div className="space-y-2 xl:col-span-2">
-                      <Label>Danh mục *</Label>
-                      <SearchableSelect
-                        options={categories.map((c) => ({ value: c.id, label: c.name }))}
-                        value={line.categoryId}
-                        onChange={(v) => updateStockInLine(line.id, { categoryId: v })}
-                        placeholder="Chọn danh mục"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Phân loại</Label>
-                      <SearchableSelect
-                        options={classifications.map((c) => ({ value: c.id, label: c.name }))}
-                        value={line.classificationId}
-                        onChange={(v) => updateStockInLine(line.id, { classificationId: v })}
-                        placeholder="Chọn phân loại"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Màu sắc</Label>
-                      <SearchableSelect
-                        options={colors.map((c) => ({ value: c.id, label: c.name }))}
-                        value={line.colorId}
-                        onChange={(v) => updateStockInLine(line.id, { colorId: v })}
-                        placeholder="Chọn màu sắc"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Kích thước</Label>
-                      <SearchableSelect
-                        options={sizes.map((c) => ({ value: c.id, label: c.name }))}
-                        value={line.sizeId}
-                        onChange={(v) => updateStockInLine(line.id, { sizeId: v })}
-                        placeholder="Chọn kích thước"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Chất liệu</Label>
-                      <SearchableSelect
-                        options={materials.map((c) => ({ value: c.id, label: c.name }))}
-                        value={line.materialId}
-                        onChange={(v) => updateStockInLine(line.id, { materialId: v })}
-                        placeholder="Chọn chất liệu"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Tình trạng hàng</Label>
-                      <SearchableSelect
-                        options={productConditions.map((c) => ({ value: c.id, label: c.name }))}
-                        value={line.productConditionId}
-                        onChange={(v) => updateStockInLine(line.id, { productConditionId: v })}
-                        placeholder="Chọn tình trạng"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Số lượng *</Label>
-                      <Input type="number" min={1} value={line.quantity} onChange={(e) => updateStockInLine(line.id, { quantity: Number(e.target.value) || 0 })} />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Loại kho</Label>
-                      <SearchableSelect
-                        options={warehouseTypes.map((t) => ({ value: t.id, label: t.name }))}
-                        value={line.warehouseTypeId}
-                        onChange={(v) => updateStockInLine(line.id, { warehouseTypeId: v })}
-                        placeholder="Chọn loại kho"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Khu vực / Thùng</Label>
-                      <SearchableSelect
-                        options={storageZones.map((z) => ({ value: z.id, label: z.name }))}
-                        value={line.storageZoneId}
-                        onChange={(v) => updateStockInLine(line.id, { storageZoneId: v })}
-                        placeholder="Chọn khu vực"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Giá nhập *</Label>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        value={line.purchasePrice ? formatNumber(line.purchasePrice) : ''}
-                        onChange={(e) => {
-                          const raw = e.target.value.replace(/[^0-9]/g, '');
-                          updateStockInLine(line.id, { purchasePrice: Number(raw) || 0 });
-                        }}
-                        placeholder="0"
-                      />
-                    </div>
-
-                    <div className="space-y-2 xl:col-span-2">
-                      <Label>Thời gian nhập kho thực tế</Label>
-                      <Input type="datetime-local" value={line.actualStockDate} onChange={(e) => updateStockInLine(line.id, { actualStockDate: e.target.value })} />
-                    </div>
-
-                    {productName && (
-                      <div className="xl:col-span-4 rounded-xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-indigo-400">Tên sản phẩm (auto)</p>
-                        <p className="mt-1 text-sm font-medium text-indigo-900">{productName}</p>
-                        {skuPreview && <p className="mt-0.5 text-xs font-mono text-indigo-600">SKU: {skuPreview}</p>}
-                      </div>
-                    )}
-
-                    <div className="space-y-2 xl:col-span-4">
-                      <Label>Ghi chú</Label>
-                      <textarea className="form-control min-h-[88px] py-3" value={line.notes} onChange={(e) => updateStockInLine(line.id, { notes: e.target.value })} placeholder="Ghi chú thêm các thông tin khác về hàng hoá (Ví dụ như hàng lỗi ghi chú cụ thể các lỗi là gì , Ví dụ Hàng kí gửi ghi chú rõ Tên & Số ĐT của KH kí gửi , ...)" />
-                    </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
+            <div className="space-y-4 pt-4">
+              {selectedPreliminaryCheck && (
+                <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-800">
+                  <div className="font-semibold">Đang xử lý từ kiểm sơ bộ</div>
+                  <div className="mt-1">
+                    {getPreliminaryCategoryLabel(selectedPreliminaryCheck)} • {selectedPreliminaryCheck.warehouseType?.name || 'Chưa chọn loại kho'} • Tổng số lượng chi tiết phải khớp: {formatNumber(selectedPreliminaryCheck.quantity)}
                   </div>
                 </div>
-              );
-            })}
+              )}
+
+              <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4 md:grid-cols-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Số dòng</p>
+                  <p className="mt-1 text-sm font-medium text-slate-800">{stockInLines.length} dòng nhập kho</p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Tổng số lượng</p>
+                  <p className={`mt-1 text-sm font-medium ${selectedPreliminaryCheck && stockInTotalQuantity !== selectedPreliminaryCheck.quantity ? 'text-rose-600' : 'text-violet-700'}`}>
+                    {formatNumber(stockInTotalQuantity)}
+                    {selectedPreliminaryCheck && stockInTotalQuantity !== selectedPreliminaryCheck.quantity && (
+                      <span className="ml-2 text-xs font-normal">
+                        (Cần đúng {formatNumber(selectedPreliminaryCheck.quantity)} — {stockInTotalQuantity < selectedPreliminaryCheck.quantity ? `thiếu ${formatNumber(selectedPreliminaryCheck.quantity - stockInTotalQuantity)}` : `thừa ${formatNumber(stockInTotalQuantity - selectedPreliminaryCheck.quantity)}`})
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Cách gửi</p>
+                  <p className="mt-1 text-sm font-medium text-slate-800">{stockInLines.length > 1 ? 'Batch stock-in' : 'Single stock-in'}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {stockInLines.map((line, index) => {
+                  const selectedCategory = categories.find((category) => category.id === line.categoryId);
+                  const selectedClassification = classifications.find((c) => c.id === line.classificationId);
+                  const selectedColor = colors.find((c) => c.id === line.colorId);
+                  const selectedSize = sizes.find((c) => c.id === line.sizeId);
+                  const selectedMaterial = materials.find((c) => c.id === line.materialId);
+
+                  const productName = [selectedClassification?.name, selectedColor?.name, selectedSize?.name, selectedMaterial?.name].filter(Boolean).join(' - ');
+
+                  const generateSkuPreview = () => {
+                    if (!selectedCategory || !selectedClassification || !selectedColor || !selectedSize || !selectedMaterial) return '';
+                    const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    return `${norm(selectedCategory.name).slice(0, 2)}${norm(selectedClassification.name).slice(0, 2)}${norm(selectedColor.name).slice(0, 2)}${norm(selectedSize.name).slice(0, 2)}${norm(selectedMaterial.name).slice(0, 2)}`;
+                  };
+
+                  const skuPreview = generateSkuPreview();
+                  const availableStorageZones = getZonesForWarehouseType(line.warehouseTypeId);
+                  const selectedZoneMeta = getStorageZoneMeta(line);
+
+                  return (
+                    <div key={line.id} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="text-[16px] font-semibold text-slate-950">Dòng nhập {index + 1}</div>
+                          <div className="text-sm text-slate-500">
+                            {productName || (selectedCategory ? selectedCategory.name : 'Chưa chọn danh mục')}
+                          </div>
+                          {skuPreview && (
+                            <div className="mt-0.5 font-mono text-xs text-indigo-600">SKU: {skuPreview}</div>
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 rounded-xl border-rose-200 text-rose-600 hover:bg-rose-50 sm:self-start"
+                          onClick={() => removeStockInLine(line.id)}
+                          disabled={stockInLines.length === 1}
+                        >
+                          <Trash2 size={15} />
+                          Xóa dòng
+                        </Button>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="space-y-2 xl:col-span-2">
+                          <Label>Danh mục *</Label>
+                          <SearchableSelect
+                            options={categories.map((c) => ({ value: c.id, label: c.name }))}
+                            value={line.categoryId}
+                            onChange={(v) => updateStockInLine(line.id, { categoryId: v })}
+                            placeholder="Chọn danh mục"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Phân loại</Label>
+                          <SearchableSelect
+                            options={classifications.map((c) => ({ value: c.id, label: c.name }))}
+                            value={line.classificationId}
+                            onChange={(v) => updateStockInLine(line.id, { classificationId: v })}
+                            placeholder="Chọn phân loại"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Màu sắc</Label>
+                          <SearchableSelect
+                            options={colors.map((c) => ({ value: c.id, label: c.name }))}
+                            value={line.colorId}
+                            onChange={(v) => updateStockInLine(line.id, { colorId: v })}
+                            placeholder="Chọn màu sắc"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Kích thước</Label>
+                          <SearchableSelect
+                            options={sizes.map((c) => ({ value: c.id, label: c.name }))}
+                            value={line.sizeId}
+                            onChange={(v) => updateStockInLine(line.id, { sizeId: v })}
+                            placeholder="Chọn kích thước"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Chất liệu</Label>
+                          <SearchableSelect
+                            options={materials.map((c) => ({ value: c.id, label: c.name }))}
+                            value={line.materialId}
+                            onChange={(v) => updateStockInLine(line.id, { materialId: v })}
+                            placeholder="Chọn chất liệu"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Tình trạng hàng</Label>
+                          <SearchableSelect
+                            options={productConditions.map((c) => ({ value: c.id, label: c.name }))}
+                            value={line.productConditionId}
+                            onChange={(v) => updateStockInLine(line.id, { productConditionId: v })}
+                            placeholder="Chọn tình trạng"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Số lượng *</Label>
+                          <Input type="number" min={1} value={line.quantity} onChange={(e) => updateStockInLine(line.id, { quantity: Number(e.target.value) || 0 })} />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Loại kho</Label>
+                          <SearchableSelect
+                            options={warehouseTypes.map((t) => ({ value: t.id, label: t.name }))}
+                            value={line.warehouseTypeId}
+                            onChange={(v) => updateStockInLine(line.id, { warehouseTypeId: v })}
+                            placeholder="Chọn loại kho"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Khu vực / Thùng</Label>
+                          <SearchableSelect
+                            options={availableStorageZones.map((zone) => {
+                              const conflictTypeName = getZoneConflictName(zone, line.warehouseTypeId);
+                              if (conflictTypeName) {
+                                return {
+                                  value: zone.id,
+                                  label: `${zone.name} (Đang ở ${conflictTypeName} · Không thể chọn)`,
+                                  disabled: true,
+                                };
+                              }
+                              const reservedQuantity = getReservedQuantityForZone(zone.id, line.id);
+                              const remaining = getStorageZoneRemaining(zone, reservedQuantity);
+                              const assignedLabel = zone.warehouseTypeId ? ` · Đã gán` : ` · Chưa gán kho`;
+                              return {
+                                value: zone.id,
+                                label: `${zone.name} (Còn ${formatNumber(remaining)}/${formatNumber(zone.maxCapacity)}${assignedLabel})`,
+                              };
+                            })}
+                            value={line.storageZoneId}
+                            onChange={(v) => updateStockInLine(line.id, { storageZoneId: v })}
+                            placeholder="Chọn khu vực"
+                          />
+                          {(() => {
+                            const selectedZone = storageZones.find((z) => z.id === line.storageZoneId);
+                            const conflictName = selectedZone ? getZoneConflictName(selectedZone, line.warehouseTypeId) : null;
+                            if (conflictName) {
+                              return (
+                                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                                  Thùng &ldquo;{selectedZone?.name}&rdquo; đang được gán vào loại kho &ldquo;{conflictName}&rdquo;. Vui lòng chọn thùng khác.
+                                </div>
+                              );
+                            }
+                            if (selectedZoneMeta) {
+                              return (
+                                <div className={`rounded-xl border px-3 py-2 text-xs ${selectedZoneMeta.isExceeded ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                                  Sức chứa còn lại {selectedZoneMeta.zone.name}: {formatNumber(selectedZoneMeta.remaining)}/{formatNumber(selectedZoneMeta.zone.maxCapacity)}
+                                  {selectedZoneMeta.reservedQuantity > 0 && ` • Đã tạm giữ ${formatNumber(selectedZoneMeta.reservedQuantity)} ở dòng khác`}
+                                  {selectedZoneMeta.isExceeded && ` • Dòng này chỉ nên nhập tối đa ${formatNumber(selectedZoneMeta.remaining)}`}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Giá nhập *</Label>
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            value={line.purchasePrice !== null ? formatNumber(line.purchasePrice) : ''}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/[^0-9]/g, '');
+                              updateStockInLine(line.id, { purchasePrice: raw === '' ? null : Number(raw) });
+                            }}
+                            placeholder="0"
+                          />
+                        </div>
+
+                        <div className="space-y-2 xl:col-span-2">
+                          <Label>Thời gian nhập kho thực tế</Label>
+                          <Input type="datetime-local" value={line.actualStockDate} onChange={(e) => updateStockInLine(line.id, { actualStockDate: e.target.value })} />
+                        </div>
+
+                        {productName && (
+                          <div className="xl:col-span-4 rounded-xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-400">Tên sản phẩm (auto)</p>
+                            <p className="mt-1 text-sm font-medium text-indigo-900">{productName}</p>
+                            {skuPreview && <p className="mt-0.5 text-xs font-mono text-indigo-600">SKU: {skuPreview}</p>}
+                          </div>
+                        )}
+
+                        <div className="space-y-2 xl:col-span-4">
+                          <Label>Ghi chú</Label>
+                          <textarea className="form-control min-h-[88px] py-3" value={line.notes} onChange={(e) => updateStockInLine(line.id, { notes: e.target.value })} placeholder="Ghi chú thêm các thông tin khác về hàng hoá (Ví dụ như hàng lỗi ghi chú cụ thể các lỗi là gì , Ví dụ Hàng kí gửi ghi chú rõ Tên & Số ĐT của KH kí gửi , ...)" />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Receipt-level image upload */}
+              <div
+                className={`rounded-2xl border-2 bg-white p-4 transition-colors ${receiptDropActive ? 'border-violet-400 bg-violet-50' : 'border-slate-200'}`}
+                onDragOver={(e) => { e.preventDefault(); setReceiptDropActive(true); }}
+                onDragLeave={() => setReceiptDropActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setReceiptDropActive(false);
+                  void handleReceiptImageSelect(e.dataTransfer.files);
+                }}
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon size={15} className="text-slate-500" />
+                    <span className="text-sm font-medium text-slate-700">Ảnh chứng từ phiếu nhập</span>
+                    {receiptImages.length > 0 && (
+                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
+                        {receiptImages.length}/{MAX_RECEIPT_IMAGES}
+                      </span>
+                    )}
+                  </div>
+                  {receiptImages.length < MAX_RECEIPT_IMAGES && (
+                    <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
+                      <Upload size={13} />
+                      Thêm ảnh
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => { void handleReceiptImageSelect(e.target.files); e.target.value = ''; }}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {receiptImages.length === 0 ? (
+                  <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed py-8 text-sm transition-colors ${receiptDropActive ? 'border-violet-400 text-violet-500' : 'border-slate-200 text-slate-400 hover:border-violet-300 hover:text-violet-500'}`}>
+                    <Upload size={28} />
+                    <span className="font-medium">Kéo thả ảnh vào đây hoặc nhấn để chọn</span>
+                    <span className="text-xs">JPG · PNG · WEBP · Tối đa {MAX_RECEIPT_IMAGES} ảnh · Tự động nén</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => { void handleReceiptImageSelect(e.target.files); e.target.value = ''; }}
+                    />
+                  </label>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+                      {receiptImages.map((img, idx) => (
+                        <div key={idx} className="group relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                          <img
+                            src={img.preview}
+                            alt={`Ảnh ${idx + 1}`}
+                            className="h-full w-full cursor-pointer object-cover transition-opacity group-hover:opacity-75"
+                            onClick={() => setReceiptImageViewIndex(idx)}
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+                            <Eye size={18} className="text-white drop-shadow" />
+                          </div>
+                          <button
+                            type="button"
+                            className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
+                            onClick={(e) => { e.stopPropagation(); removeReceiptImage(idx); }}
+                          >
+                            <X size={11} />
+                          </button>
+                          <div className="absolute bottom-1 left-1 rounded bg-black/50 px-1 text-[10px] text-white">
+                            {idx + 1}
+                          </div>
+                        </div>
+                      ))}
+                      {receiptImages.length < MAX_RECEIPT_IMAGES && (
+                        <label className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-violet-300 hover:text-violet-500">
+                          <Upload size={18} />
+                          <span className="text-xs">Thêm</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => { void handleReceiptImageSelect(e.target.files); e.target.value = ''; }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    <p className="text-center text-[11px] text-slate-400">
+                      Kéo thả thêm ảnh vào đây · Ảnh tự động được nén còn tối đa 500 KB
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={addStockInLine}>
+          <DialogFooter className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={addStockInLine} disabled={isStockInSubmitting}>
               <Plus size={15} />
               Thêm dòng
             </Button>
-            <Button variant="outline" onClick={() => setStockInOpen(false)}>
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setStockInOpen(false)} disabled={isStockInSubmitting}>
               Hủy
             </Button>
-            <Button
-              onClick={submitStockIn}
-              disabled={stockInLines.length === 0}
-            >
-              {stockInLines.length > 1 ? 'Xác nhận nhập nhiều dòng' : 'Xác nhận nhập hàng'}
+            <Button className="w-full sm:w-auto" onClick={submitStockIn} disabled={stockInLines.length === 0 || isStockInSubmitting}>
+              {isStockInSubmitting ? 'Đang xử lý...' : stockInLines.length > 1 ? 'Xác nhận nhập nhiều dòng' : 'Xác nhận nhập hàng'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lightbox xem ảnh giao dịch đã lưu */}
+      <Dialog open={txImageView !== null} onOpenChange={(open) => { if (!open) setTxImageView(null); }}>
+        <DialogContent className="max-w-3xl bg-black/90 p-0 border-0">
+          <div className="relative flex items-center justify-center min-h-[60vh]">
+            {txImageView && (
+              <img
+                src={txImageView.urls[txImageView.index]}
+                alt={`Ảnh ${txImageView.index + 1}`}
+                className="max-h-[80vh] max-w-full rounded object-contain"
+              />
+            )}
+            {txImageView && txImageView.urls.length > 1 && (
+              <>
+                <button
+                  className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/20 p-2 text-white hover:bg-white/40 text-lg"
+                  onClick={() => setTxImageView((v) => v ? { ...v, index: (v.index - 1 + v.urls.length) % v.urls.length } : null)}
+                >
+                  ‹
+                </button>
+                <button
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/20 p-2 text-white hover:bg-white/40 text-lg"
+                  onClick={() => setTxImageView((v) => v ? { ...v, index: (v.index + 1) % v.urls.length } : null)}
+                >
+                  ›
+                </button>
+              </>
+            )}
+            {txImageView && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
+                {txImageView.index + 1} / {txImageView.urls.length}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lightbox xem ảnh phiếu nhập */}
+      <Dialog open={receiptImageViewIndex !== null} onOpenChange={(open) => { if (!open) setReceiptImageViewIndex(null); }}>
+        <DialogContent className="max-w-3xl bg-black/90 p-0 border-0">
+          <div className="relative flex items-center justify-center min-h-[60vh]">
+            {receiptImageViewIndex !== null && receiptImages[receiptImageViewIndex] && (
+              <img
+                src={receiptImages[receiptImageViewIndex].preview}
+                alt={`Ảnh ${receiptImageViewIndex + 1}`}
+                className="max-h-[80vh] max-w-full rounded object-contain"
+              />
+            )}
+            {receiptImageViewIndex !== null && receiptImages.length > 1 && (
+              <>
+                <button
+                  className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/20 p-2 text-white hover:bg-white/40"
+                  onClick={() => setReceiptImageViewIndex((i) => i !== null ? (i - 1 + receiptImages.length) % receiptImages.length : 0)}
+                >
+                  ‹
+                </button>
+                <button
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/20 p-2 text-white hover:bg-white/40"
+                  onClick={() => setReceiptImageViewIndex((i) => i !== null ? (i + 1) % receiptImages.length : 0)}
+                >
+                  ›
+                </button>
+              </>
+            )}
+            {receiptImageViewIndex !== null && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
+                {receiptImageViewIndex + 1} / {receiptImages.length}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={stockOutOpen} onOpenChange={(open) => {
         setStockOutOpen(open);
         if (!open) {
-          setStockOutSearch('');
-          setStockOutSelectedProduct('');
+          setStockOutLines([createStockOutLine()]);
+          setStockOutSearchLineId(null);
           setStockOutSearchResults([]);
           setStockOutSearchOpen(false);
+          setStockOutZonesByLine({});
         }
       }}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Xuất hàng khỏi kho</DialogTitle>
+        <DialogContent className="flex max-h-[calc(100vh-1rem)] max-w-5xl flex-col overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)]">
+          <DialogHeader className="px-4 pb-0 pt-4 sm:px-6 sm:pt-6">
+            <DialogTitle>Xuất hàng khỏi kho theo nhiều dòng</DialogTitle>
           </DialogHeader>
 
-          <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Tồn tại vị trí</p>
-              <p className="mt-1 text-sm font-medium text-slate-800">
-                {selectedStockOutPosition ? `${selectedStockOutPosition.label} - ${formatNumber(selectedStockOutPosition.currentStock)}` : 'Chưa chọn vị trí'}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="space-y-2 relative">
-              <Label>Tìm sản phẩm *</Label>
-              <Input
-                type="text"
-                placeholder="Gõ tên sản phẩm, phân loại, màu sắc, kích thước..."
-                value={stockOutSearch}
-                onChange={(e) => {
-                  setStockOutSearch(e.target.value);
-                  searchSkuCombos(e.target.value);
-                }}
-                onFocus={() => { if (stockOutSearchResults.length > 0) setStockOutSearchOpen(true); }}
-              />
-              {stockOutSelectedProduct && (
-                <div className="mt-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 flex items-center justify-between">
-                  <span>{stockOutSelectedProduct}</span>
-                  <button
-                    type="button"
-                    className="ml-2 text-indigo-400 hover:text-indigo-700"
-                    onClick={() => {
-                      setStockOutSelectedProduct('');
-                      setStockOutForm((prev) => ({ ...prev, skuComboId: '', categoryId: '' }));
-                      setStockOutSearch('');
-                    }}
-                  >
-                    ✕
-                  </button>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
+            <div className="space-y-4 pt-4">
+              <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4 md:grid-cols-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Số dòng</p>
+                  <p className="mt-1 text-sm font-medium text-slate-800">{stockOutLines.length} dòng xuất kho</p>
                 </div>
-              )}
-              {stockOutSearchOpen && stockOutSearchResults.length > 0 && (
-                <div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-60 overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-                  {stockOutSearchResults.map((combo) => {
-                    const productLabel = [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' - ');
-                    return (
-                      <button
-                        key={combo.id}
-                        type="button"
-                        className="w-full px-4 py-3 text-left hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
-                        onClick={() => {
-                          setStockOutForm((prev) => ({
-                            ...prev,
-                            skuComboId: combo.id,
-                            categoryId: combo.categoryId || '',
-                          }));
-                          setStockOutSelectedProduct(productLabel + (combo.categoryName ? ` (${combo.categoryName})` : ''));
-                          setStockOutSearch('');
-                          setStockOutSearchOpen(false);
-                          setStockOutSearchResults([]);
-                        }}
-                      >
-                        <div className="text-sm font-medium text-slate-900">{productLabel}</div>
-                        <div className="text-xs text-slate-500">
-                          <span className="font-mono">{combo.compositeSku}</span>
-                          {combo.categoryName && <span className="ml-2">• {combo.categoryName}</span>}
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Tổng số lượng</p>
+                  <p className="mt-1 text-sm font-medium text-slate-800">
+                    {formatNumber(stockOutLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0))}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Cách gửi</p>
+                  <p className="mt-1 text-sm font-medium text-slate-800">{stockOutLines.length > 1 ? 'Batch stock-out' : 'Single stock-out'}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {stockOutLines.map((line, index) => {
+                  return (
+                    <div key={line.id} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[16px] font-semibold text-slate-950">Dòng xuất {index + 1}</div>
+                          <div className="text-sm text-slate-500">
+                            {line.selectedProduct || 'Chưa chọn sản phẩm'}
+                          </div>
                         </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              {stockOutSearchOpen && stockOutSearch.length >= 1 && stockOutSearchResults.length === 0 && (
-                <div className="absolute z-50 left-0 right-0 top-full mt-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-lg">
-                  Không tìm thấy sản phẩm nào
-                </div>
-              )}
-            </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 rounded-xl border-rose-200 text-rose-600 hover:bg-rose-50"
+                          onClick={() => removeStockOutLine(line.id)}
+                          disabled={stockOutLines.length === 1}
+                        >
+                          <Trash2 size={15} />
+                          Xóa dòng
+                        </Button>
+                      </div>
 
-            <div className="space-y-2">
-              <Label>Vị trí xuất</Label>
-              <SearchableSelect
-                options={positions.map((p) => ({ value: p.id, label: `${p.label} (tồn: ${p.currentStock})` }))}
-                value={stockOutForm.warehousePositionId}
-                onChange={(v) => setStockOutForm((prev) => ({ ...prev, warehousePositionId: v }))}
-                placeholder="Chọn vị trí xuất"
-              />
-            </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2 relative">
+                          <Label>Tìm sản phẩm *</Label>
+                          <Input
+                            type="text"
+                            placeholder="Gõ tên sản phẩm, phân loại, màu sắc, kích thước..."
+                            value={line.search}
+                            onChange={(e) => {
+                              updateStockOutLine(line.id, { search: e.target.value });
+                              setStockOutSearchLineId(line.id);
+                              searchSkuCombos(e.target.value);
+                            }}
+                            onFocus={() => {
+                              setStockOutSearchLineId(line.id);
+                              if (stockOutSearchResults.length > 0) setStockOutSearchOpen(true);
+                            }}
+                          />
+                          {line.selectedProduct && (
+                            <div className="mt-1 flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
+                              <span>{line.selectedProduct}</span>
+                              <button
+                                type="button"
+                                className="ml-2 text-indigo-400 hover:text-indigo-700"
+                                onClick={() => {
+                                  updateStockOutLine(line.id, {
+                                    selectedProduct: '',
+                                    skuComboId: '',
+                                    categoryId: '',
+                                    storageZoneId: '',
+                                    search: '',
+                                  });
+                                  setStockOutZonesByLine((prev) => {
+                                    const next = { ...prev };
+                                    delete next[line.id];
+                                    return next;
+                                  });
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )}
+                          {stockOutSearchLineId === line.id && stockOutSearchOpen && stockOutSearchResults.length > 0 && (
+                            <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                              {stockOutSearchResults.map((combo) => {
+                                const productLabel = [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' - ');
+                                return (
+                                  <button
+                                    key={combo.id}
+                                    type="button"
+                                    className="w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
+                                    onClick={() => {
+                                      updateStockOutLine(line.id, {
+                                        skuComboId: combo.id,
+                                        categoryId: combo.categoryId || '',
+                                        selectedProduct: productLabel + (combo.categoryName ? ` (${combo.categoryName})` : ''),
+                                        search: '',
+                                        storageZoneId: '',
+                                      });
+                                      setStockOutSearchOpen(false);
+                                      setStockOutSearchResults([]);
+                                      fetchStockOutZonesForLine(line.id, combo.id);
+                                    }}
+                                  >
+                                    <div className="text-sm font-medium text-slate-900">{productLabel}</div>
+                                    <div className="text-xs text-slate-500">
+                                      <span className="font-mono">{combo.compositeSku}</span>
+                                      {combo.categoryName && <span className="ml-2">• {combo.categoryName}</span>}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {stockOutSearchLineId === line.id && stockOutSearchOpen && line.search.length >= 1 && stockOutSearchResults.length === 0 && (
+                            <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-lg">
+                              Không tìm thấy sản phẩm nào
+                            </div>
+                          )}
+                        </div>
 
-            <div className="space-y-2">
-              <Label>Số lượng xuất</Label>
-              <Input type="number" min={1} value={stockOutForm.quantity} onChange={(e) => setStockOutForm((prev) => ({ ...prev, quantity: Number(e.target.value) }))} />
-            </div>
+                        <div className="space-y-2">
+                          <Label>Thùng / Khu vực xuất</Label>
+                          {(() => {
+                            const availableZones = stockOutZonesByLine[line.id] || [];
+                            const selectedZoneStock = availableZones.find((z) => z.storageZoneId === line.storageZoneId);
+                            return (
+                              <>
+                                <SearchableSelect
+                                  options={
+                                    line.skuComboId
+                                      ? availableZones.map((z) => ({
+                                          value: z.storageZoneId,
+                                          label: `${z.storageZoneName} (tồn: ${formatNumber(z.stock)})`,
+                                        }))
+                                      : storageZones.map((z) => ({ value: z.id, label: z.name }))
+                                  }
+                                  value={line.storageZoneId || ''}
+                                  onChange={(v) => updateStockOutLine(line.id, { storageZoneId: v })}
+                                  placeholder={line.skuComboId ? (availableZones.length === 0 ? 'Sản phẩm chưa có tồn kho' : 'Chọn thùng / khu vực xuất') : 'Chọn sản phẩm trước'}
+                                />
+                                {selectedZoneStock && line.quantity > selectedZoneStock.stock && (
+                                  <p className="text-xs text-rose-500">
+                                    Số lượng xuất ({formatNumber(line.quantity)}) vượt quá tồn kho tại khu vực này ({formatNumber(selectedZoneStock.stock)})
+                                  </p>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
 
-            <div className="space-y-2">
-              <Label>Ghi chú</Label>
-              <textarea className="form-control min-h-[96px] py-3" value={stockOutForm.notes} onChange={(e) => setStockOutForm((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Nhập ghi chú xuất hàng" />
+                        <div className="space-y-2">
+                          <Label>Số lượng xuất</Label>
+                          <Input type="number" min={1} value={line.quantity} onChange={(e) => updateStockOutLine(line.id, { quantity: Number(e.target.value) || 0 })} />
+                        </div>
+
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>Ghi chú</Label>
+                          <textarea className="form-control min-h-[96px] py-3" value={line.notes} onChange={(e) => updateStockOutLine(line.id, { notes: e.target.value })} placeholder="Nhập ghi chú xuất hàng" />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setStockOutOpen(false)}>
+          <DialogFooter className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={addStockOutLine}>
+              <Plus size={15} />
+              Thêm dòng
+            </Button>
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setStockOutOpen(false)}>
               Hủy
             </Button>
-            <Button onClick={submitStockOut} disabled={!stockOutForm.skuComboId || !stockOutForm.categoryId || !stockOutForm.quantity}>
-              Xác nhận xuất hàng
+            <Button className="w-full sm:w-auto" onClick={submitStockOut} disabled={stockOutLines.some((line) => !line.skuComboId || !line.categoryId || !line.quantity || !line.storageZoneId)}>
+              {stockOutLines.length > 1 ? 'Xác nhận xuất nhiều dòng' : 'Xác nhận xuất hàng'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2378,9 +3865,9 @@ export default function TransactionsPage() {
 
           <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Vị trí</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-400">Thùng / Khu vực</p>
               <p className="mt-1 text-sm font-medium text-slate-800">
-                {selectedAdjustmentPosition ? `${selectedAdjustmentPosition.label} - ${formatNumber(selectedAdjustmentPosition.currentStock)}` : 'Chưa chọn vị trí'}
+                {selectedAdjustmentZone ? `${selectedAdjustmentZone.name} - Sức chứa: ${formatNumber(selectedAdjustmentZone.currentStock)}/${formatNumber(selectedAdjustmentZone.maxCapacity)}` : 'Chưa chọn thùng / khu vực'}
               </p>
             </div>
           </div>
@@ -2406,7 +3893,7 @@ export default function TransactionsPage() {
                     className="ml-2 text-indigo-400 hover:text-indigo-700"
                     onClick={() => {
                       setAdjustSelectedProduct('');
-                      setAdjustmentForm((prev) => ({ ...prev, categoryId: '' }));
+                      setAdjustmentForm((prev) => ({ ...prev, categoryId: '', skuComboId: '' }));
                       setAdjustSearch('');
                     }}
                   >
@@ -2427,6 +3914,7 @@ export default function TransactionsPage() {
                           setAdjustmentForm((prev) => ({
                             ...prev,
                             categoryId: combo.categoryId || '',
+                            skuComboId: combo.id,
                           }));
                           setAdjustSelectedProduct(productLabel + (combo.categoryName ? ` (${combo.categoryName})` : ''));
                           setAdjustSearch('');
@@ -2454,10 +3942,10 @@ export default function TransactionsPage() {
             <div className="space-y-2">
               <Label>Vị trí</Label>
               <SearchableSelect
-                options={positions.map((p) => ({ value: p.id, label: p.label }))}
-                value={adjustmentForm.warehousePositionId}
-                onChange={(v) => setAdjustmentForm((prev) => ({ ...prev, warehousePositionId: v }))}
-                placeholder="Chọn vị trí"
+                options={storageZones.map((z) => ({ value: z.id, label: z.name }))}
+                value={adjustmentForm.storageZoneId}
+                onChange={(v) => setAdjustmentForm((prev) => ({ ...prev, storageZoneId: v }))}
+                placeholder="Chọn thùng / khu vực"
               />
             </div>
 

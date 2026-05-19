@@ -94,7 +94,7 @@ export default function ProductsPage() {
           {isLoading ? (
             <div className="flex items-center justify-center h-48"><div className="spinner" style={{ borderTopColor: '#0d6efd' }}></div></div>
           ) : (
-            <div className="table-container">
+            <div className="table-container overflow-x-auto">
               <table className="table">
                 <thead>
                   <tr>

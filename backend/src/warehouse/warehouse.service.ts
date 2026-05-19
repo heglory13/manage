@@ -104,17 +104,22 @@ export class WarehouseService {
       (dto.rows !== undefined && dto.rows !== existing.rows) ||
       (dto.columns !== undefined && dto.columns !== existing.columns)
     ) {
-      // Delete old positions
-      await this.prisma.warehousePosition.deleteMany({
-        where: { layoutId: id },
+      // Block if any active position still has stock
+      const occupiedCount = await this.prisma.warehousePosition.count({
+        where: { layoutId: id, isActive: true, currentStock: { gt: 0 } },
       });
+      if (occupiedCount > 0) {
+        throw new BadRequestException(
+          `Không thể thay đổi kích thước lưới khi còn ${occupiedCount} vị trí đang chứa hàng. Vui lòng chuyển hàng ra trước.`,
+        );
+      }
 
-      // Create new positions
-      const positions: {
-        layoutId: string;
+      // Build new grid positions
+      const newPositions: {
+        label: string;
         row: number;
         column: number;
-        label: string;
+        layoutId: string;
         x: number;
         y: number;
         width: number;
@@ -125,7 +130,7 @@ export class WarehouseService {
         for (let c = 0; c < newColumns; c++) {
           const rowLabel = String.fromCharCode(65 + r);
           const colLabel = (c + 1).toString();
-          positions.push({
+          newPositions.push({
             layoutId: id,
             row: r,
             column: c,
@@ -135,13 +140,53 @@ export class WarehouseService {
         }
       }
 
-      await this.prisma.warehousePosition.createMany({ data: positions });
+      // Toàn bộ thao tác resize nằm trong 1 transaction — partial failure sẽ rollback
+      const newLabels = newPositions.map((p) => p.label);
+      await this.prisma.$transaction(async (tx) => {
+        // Soft-delete all active positions — giữ UUID và transaction links
+        await tx.warehousePosition.updateMany({
+          where: { layoutId: id, isActive: true },
+          data: { isActive: false },
+        });
+
+        // Lấy tất cả bản ghi cùng label để tái sử dụng (tránh vi phạm unique constraint)
+        const existingByLabel = await tx.warehousePosition.findMany({
+          where: { layoutId: id, label: { in: newLabels } },
+        });
+        const existingLabelMap = new Map(existingByLabel.map((p) => [p.label!, p]));
+
+        // Reactivate bản ghi cũ nếu label khớp, tạo mới nếu chưa từng tồn tại
+        const toCreate: typeof newPositions = [];
+        for (const pos of newPositions) {
+          const old = existingLabelMap.get(pos.label);
+          if (old) {
+            await tx.warehousePosition.update({
+              where: { id: old.id },
+              data: {
+                isActive: true,
+                row: pos.row,
+                column: pos.column,
+                x: pos.x,
+                y: pos.y,
+                width: pos.width,
+                height: pos.height,
+              },
+            });
+          } else {
+            toCreate.push(pos);
+          }
+        }
+        if (toCreate.length > 0) {
+          await tx.warehousePosition.createMany({ data: toCreate });
+        }
+      });
     }
 
     return this.prisma.warehouseLayout.findUnique({
       where: { id: layout.id },
       include: {
         positions: {
+          where: { isActive: true },
           orderBy: [{ row: 'asc' }, { column: 'asc' }],
         },
       },
@@ -157,6 +202,22 @@ export class WarehouseService {
       throw new NotFoundException('Layout không tồn tại');
     }
 
+    const positions = await this.prisma.warehousePosition.findMany({
+      where: { layoutId: id },
+      select: { id: true },
+    });
+    const positionIds = positions.map((p) => p.id);
+    if (positionIds.length > 0) {
+      const linkedTxCount = await this.prisma.inventoryTransaction.count({
+        where: { warehousePositionId: { in: positionIds } },
+      });
+      if (linkedTxCount > 0) {
+        throw new BadRequestException(
+          `Không thể xóa layout này vì có ${linkedTxCount} giao dịch kho liên quan đến các vị trí trong layout.`,
+        );
+      }
+    }
+
     // Cascade delete is handled by Prisma schema (onDelete: Cascade)
     await this.prisma.warehouseLayout.delete({ where: { id } });
   }
@@ -167,7 +228,9 @@ export class WarehouseService {
     canvasWidth?: number,
     canvasHeight?: number,
   ) {
-    const layout = await this.prisma.warehouseLayout.findUnique({ where: { id } });
+    const layout = await this.prisma.warehouseLayout.findUnique({
+      where: { id },
+    });
     if (!layout) {
       throw new NotFoundException('Layout không tồn tại');
     }
@@ -181,6 +244,7 @@ export class WarehouseService {
       },
       include: {
         positions: {
+          where: { isActive: true },
           orderBy: [{ row: 'asc' }, { column: 'asc' }],
         },
       },
@@ -193,6 +257,7 @@ export class WarehouseService {
     const layout = await this.prisma.warehouseLayout.findFirst({
       include: {
         positions: {
+          where: { isActive: true },
           orderBy: [{ row: 'asc' }, { column: 'asc' }],
         },
       },
@@ -206,7 +271,8 @@ export class WarehouseService {
     const position = await this.prisma.warehousePosition.findUnique({
       where: { id: positionId },
     });
-    return !!position;
+    // Chỉ cho phép giao dịch mới link vào vị trí đang active
+    return !!position && position.isActive;
   }
 
   async movePosition(id: string, targetRow: number, targetCol: number) {
@@ -218,12 +284,13 @@ export class WarehouseService {
       throw new NotFoundException('Vị trí không tồn tại');
     }
 
-    // Find if there's a position at the target coordinates
+    // Chỉ tìm active position — không swap với inactive record
     const targetPosition = await this.prisma.warehousePosition.findFirst({
       where: {
         layoutId: position.layoutId,
         row: targetRow,
         column: targetCol,
+        isActive: true,
       },
     });
 
@@ -259,7 +326,8 @@ export class WarehouseService {
       throw new NotFoundException('Vị trí không tồn tại');
     }
 
-    // Check for duplicate label in the same layout
+    // Kiểm tra cả active lẫn inactive — DB có unique constraint [layoutId, label]
+    // nên rename sang label của inactive record cũng sẽ gây P2002 crash nếu không chặn trước.
     const duplicate = await this.prisma.warehousePosition.findFirst({
       where: {
         layoutId: position.layoutId,
@@ -269,7 +337,10 @@ export class WarehouseService {
     });
 
     if (duplicate) {
-      throw new BadRequestException('Nhãn vị trí đã tồn tại trong sơ đồ kho');
+      const reason = duplicate.isActive
+        ? 'Nhãn vị trí đã tồn tại trong sơ đồ kho'
+        : 'Nhãn này đã được dùng bởi một vị trí đã xóa. Hãy tạo lại vị trí đó để khôi phục dữ liệu.';
+      throw new BadRequestException(reason);
     }
 
     const matchedZone = await this.prisma.storageZone.findFirst({
@@ -323,6 +394,12 @@ export class WarehouseService {
       throw new BadRequestException('Sức chứa tối đa phải lớn hơn 0');
     }
 
+    if (maxCapacity < position.currentStock) {
+      throw new BadRequestException(
+        `Sức chứa tối đa không thể nhỏ hơn tồn kho hiện tại (${position.currentStock})`,
+      );
+    }
+
     return this.prisma.warehousePosition.update({
       where: { id },
       data: { maxCapacity },
@@ -345,8 +422,13 @@ export class WarehouseService {
       height: dto.height ?? position.height,
     };
 
-    if (position.layout.layoutMode === 'GRID' && (dto.x !== undefined || dto.y !== undefined)) {
-      throw new ForbiddenException('Layout dạng GRID không cho phép kéo thả tự do');
+    if (
+      position.layout.layoutMode === 'GRID' &&
+      (dto.x !== undefined || dto.y !== undefined)
+    ) {
+      throw new ForbiddenException(
+        'Layout dạng GRID không cho phép kéo thả tự do',
+      );
     }
 
     return this.prisma.warehousePosition.update({
@@ -363,15 +445,42 @@ export class WarehouseService {
       throw new NotFoundException('Layout không tồn tại');
     }
 
-    // Auto-assign next row/column based on existing positions
-    let row = dto.y !== undefined ? Math.floor(dto.y / 90) : 0;
-    let column = dto.x !== undefined ? Math.floor(dto.x / 110) : 0;
+    // Chỉ đếm active positions để auto-label không bị nhảy số khi có inactive records
+    const activeCount = await this.prisma.warehousePosition.count({
+      where: { layoutId: dto.layoutId, isActive: true },
+    });
+    const label = dto.label ?? `P${activeCount + 1}`;
 
-    const existing = await this.prisma.warehousePosition.count({
-      where: { layoutId: dto.layoutId },
+    // Nếu đã tồn tại bản ghi cùng label (kể cả inactive), reactivate thay vì tạo mới.
+    // Điều này đảm bảo UUID không thay đổi và toàn bộ lịch sử giao dịch được giữ nguyên.
+    const existingByLabel = await this.prisma.warehousePosition.findFirst({
+      where: { layoutId: dto.layoutId, label },
     });
 
-    const position = await this.prisma.warehousePosition.create({
+    if (existingByLabel) {
+      if (existingByLabel.isActive) {
+        throw new BadRequestException('Nhãn vị trí đã tồn tại trong sơ đồ kho');
+      }
+      // Reactivate — khôi phục vị trí với UUID cũ, giữ nguyên transaction links
+      const reactivated = await this.prisma.warehousePosition.update({
+        where: { id: existingByLabel.id },
+        data: {
+          isActive: true,
+          x: dto.x ?? existingByLabel.x,
+          y: dto.y ?? existingByLabel.y,
+          width: dto.width ?? existingByLabel.width,
+          height: dto.height ?? existingByLabel.height,
+          maxCapacity: dto.maxCapacity ?? existingByLabel.maxCapacity,
+        },
+      });
+      // Trả về flag để frontend biết đây là khôi phục vị trí cũ (có lịch sử tồn kho)
+      return { ...reactivated, reactivated: true };
+    }
+
+    const row = dto.y !== undefined ? Math.floor(dto.y / 90) : 0;
+    const column = dto.x !== undefined ? Math.floor(dto.x / 110) : 0;
+
+    return this.prisma.warehousePosition.create({
       data: {
         layoutId: dto.layoutId,
         row,
@@ -380,12 +489,10 @@ export class WarehouseService {
         y: dto.y ?? 0,
         width: dto.width ?? 100,
         height: dto.height ?? 80,
-        label: dto.label ?? `P${existing + 1}`,
+        label,
         maxCapacity: dto.maxCapacity ?? null,
       },
     });
-
-    return position;
   }
 
   async deletePosition(id: string, force?: boolean) {
@@ -396,13 +503,21 @@ export class WarehouseService {
       throw new NotFoundException('Vị trí không tồn tại');
     }
 
-    if (!force && position.currentStock > 0) {
+    // Block if position has stock and not confirmed
+    if (position.currentStock > 0 && !force) {
       throw new BadRequestException(
-        'Vị trí đang chứa hàng hóa. Dùng force=true để xóa bất chấp.',
+        'Vị trí đang chứa hàng hóa. Xác nhận để xóa bắt buộc.',
       );
     }
 
-    await this.prisma.warehousePosition.delete({ where: { id } });
+    // Soft delete — UUID và transaction links được giữ nguyên.
+    // Khi tạo lại vị trí cùng label, hệ thống sẽ reactivate bản ghi này
+    // thay vì tạo mới, đảm bảo toàn bộ lịch sử tồn kho không bị mất.
+    await this.prisma.warehousePosition.update({
+      where: { id },
+      data: { isActive: false },
+    });
+
     return { success: true };
   }
 
@@ -421,37 +536,66 @@ export class WarehouseService {
         status: 'ACTIVE',
       },
       include: {
-        skuCombo: true,
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
+          },
+        },
+        category: true,
       },
     });
 
-    // Group by skuComboId and sum quantities
-    const skuMap = new Map<string, { skuComboId: string; compositeSku: string; quantity: number }>();
+    const skuMap = new Map<
+      string,
+      {
+        compositeSku: string;
+        quantity: number;
+        classification: string | null;
+        color: string | null;
+        size: string | null;
+        material: string | null;
+        categoryName: string | null;
+      }
+    >();
+    let computedCurrentStock = 0;
 
     for (const txn of transactions) {
-      if (!txn.skuComboId || !txn.skuCombo) continue;
-      const key = txn.skuComboId;
-      const existing = skuMap.get(key);
       const delta = txn.type === 'STOCK_IN' ? txn.quantity : -txn.quantity;
+      computedCurrentStock += delta;
+
+      if (!txn.skuComboId && !txn.categoryId) continue;
+      const key = txn.skuComboId ?? `cat:${txn.categoryId}`;
+      const existing = skuMap.get(key);
 
       if (existing) {
         existing.quantity += delta;
       } else {
         skuMap.set(key, {
-          skuComboId: txn.skuComboId,
-          compositeSku: txn.skuCombo.compositeSku,
+          compositeSku: txn.skuCombo?.compositeSku ?? '',
           quantity: delta,
+          classification: txn.skuCombo?.classification?.name ?? null,
+          color: txn.skuCombo?.color?.name ?? null,
+          size: txn.skuCombo?.size?.name ?? null,
+          material: txn.skuCombo?.material?.name ?? null,
+          categoryName: txn.category?.name ?? null,
         });
       }
     }
 
-    return Array.from(skuMap.values()).filter((s) => s.quantity > 0);
+    return {
+      skus: Array.from(skuMap.values()).filter((s) => s.quantity > 0),
+      currentStock: computedCurrentStock,
+    };
   }
 
   async getLayoutWithSkus() {
     const layouts = await this.prisma.warehouseLayout.findMany({
       include: {
         positions: {
+          where: { isActive: true },
           include: {
             inventoryTransactions: {
               where: {
@@ -479,16 +623,28 @@ export class WarehouseService {
 
     return layouts.map((layout) => {
       const positions = layout.positions.map((pos) => {
-        const skuMap = new Map<string, {
-          compositeSku: string;
-          quantity: number;
-          classification: string | null;
-          color: string | null;
-          size: string | null;
-          material: string | null;
-        }>();
+        const skuMap = new Map<
+          string,
+          {
+            compositeSku: string;
+            quantity: number;
+            classification: string | null;
+            color: string | null;
+            size: string | null;
+            material: string | null;
+          }
+        >();
+
+        let computedCurrentStock = 0;
 
         for (const txn of pos.inventoryTransactions) {
+          // Compute currentStock from transaction sum
+          if (txn.type === 'STOCK_IN') {
+            computedCurrentStock += txn.quantity;
+          } else {
+            computedCurrentStock -= txn.quantity;
+          }
+
           if (!txn.skuComboId || !txn.skuCombo) continue;
           const key = txn.skuComboId;
           const existing = skuMap.get(key);
@@ -512,7 +668,7 @@ export class WarehouseService {
 
         // Remove inventoryTransactions from response to keep it clean
         const { inventoryTransactions, ...posData } = pos;
-        return { ...posData, skus };
+        return { ...posData, currentStock: computedCurrentStock, skus };
       });
 
       return { ...layout, positions };

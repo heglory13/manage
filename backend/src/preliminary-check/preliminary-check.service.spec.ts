@@ -8,7 +8,9 @@ function createMockPrisma() {
       findUnique: jest.fn().mockResolvedValue({ id: 'cls-1', name: 'Test' }),
     },
     warehouseType: {
-      findUnique: jest.fn().mockResolvedValue({ id: 'wt-1', name: 'Kho sản xuất' }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ id: 'wt-1', name: 'Kho sản xuất' }),
     },
     preliminaryCheck: {
       create: jest.fn().mockImplementation(({ data }) => {
@@ -18,7 +20,9 @@ function createMockPrisma() {
           createdAt: new Date(),
           updatedAt: new Date(),
           classification: { id: data.classificationId, name: 'Test' },
-          warehouseType: data.warehouseTypeId ? { id: data.warehouseTypeId, name: 'Kho' } : null,
+          warehouseType: data.warehouseTypeId
+            ? { id: data.warehouseTypeId, name: 'Kho' }
+            : null,
           creator: { id: data.createdBy, name: 'User', email: 'user@test.com' },
         });
       }),
@@ -32,7 +36,9 @@ function createMockPrisma() {
 describe('PreliminaryCheckService', () => {
   it('should create a preliminary check with PENDING status', async () => {
     const mockPrisma = createMockPrisma();
-    const service = new PreliminaryCheckService(mockPrisma as unknown as PrismaService);
+    const service = new PreliminaryCheckService(
+      mockPrisma as unknown as PrismaService,
+    );
 
     const result = await service.create(
       { classificationId: 'cls-1', quantity: 10 },
@@ -47,7 +53,9 @@ describe('PreliminaryCheckService', () => {
   it('should throw NotFoundException for invalid classification', async () => {
     const mockPrisma = createMockPrisma();
     mockPrisma.classification.findUnique.mockResolvedValue(null);
-    const service = new PreliminaryCheckService(mockPrisma as unknown as PrismaService);
+    const service = new PreliminaryCheckService(
+      mockPrisma as unknown as PrismaService,
+    );
 
     await expect(
       service.create({ classificationId: 'invalid', quantity: 5 }, 'user-1'),
@@ -57,7 +65,9 @@ describe('PreliminaryCheckService', () => {
   it('should throw NotFoundException for invalid warehouseType', async () => {
     const mockPrisma = createMockPrisma();
     mockPrisma.warehouseType.findUnique.mockResolvedValue(null);
-    const service = new PreliminaryCheckService(mockPrisma as unknown as PrismaService);
+    const service = new PreliminaryCheckService(
+      mockPrisma as unknown as PrismaService,
+    );
 
     await expect(
       service.create(
@@ -70,16 +80,22 @@ describe('PreliminaryCheckService', () => {
   it('should throw NotFoundException for non-existent check in findOne', async () => {
     const mockPrisma = createMockPrisma();
     mockPrisma.preliminaryCheck.findUnique.mockResolvedValue(null);
-    const service = new PreliminaryCheckService(mockPrisma as unknown as PrismaService);
+    const service = new PreliminaryCheckService(
+      mockPrisma as unknown as PrismaService,
+    );
 
-    await expect(service.findOne('non-existent')).rejects.toThrow(NotFoundException);
+    await expect(service.findOne('non-existent')).rejects.toThrow(
+      NotFoundException,
+    );
   });
 
   it('should return paginated results from findAll', async () => {
     const mockPrisma = createMockPrisma();
     mockPrisma.preliminaryCheck.findMany.mockResolvedValue([{ id: 'pc-1' }]);
     mockPrisma.preliminaryCheck.count.mockResolvedValue(1);
-    const service = new PreliminaryCheckService(mockPrisma as unknown as PrismaService);
+    const service = new PreliminaryCheckService(
+      mockPrisma as unknown as PrismaService,
+    );
 
     const result = await service.findAll({ page: 1, limit: 10 });
 

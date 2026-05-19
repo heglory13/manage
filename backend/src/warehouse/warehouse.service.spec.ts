@@ -22,9 +22,9 @@ describe('WarehouseService - V2 Methods', () => {
       storageZone: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
-      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) =>
-        Promise.all(ops),
-      ),
+      $transaction: jest
+        .fn()
+        .mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
 
     service = new WarehouseService(mockPrisma as unknown as PrismaService);
@@ -32,15 +32,29 @@ describe('WarehouseService - V2 Methods', () => {
 
   describe('movePosition', () => {
     it('should swap two positions when target is occupied', async () => {
-      const posA = { id: 'a', layoutId: 'layout-1', row: 0, column: 0, isActive: true };
-      const posB = { id: 'b', layoutId: 'layout-1', row: 1, column: 1, isActive: true };
+      const posA = {
+        id: 'a',
+        layoutId: 'layout-1',
+        row: 0,
+        column: 0,
+        isActive: true,
+      };
+      const posB = {
+        id: 'b',
+        layoutId: 'layout-1',
+        row: 1,
+        column: 1,
+        isActive: true,
+      };
 
       mockPrisma.warehousePosition.findUnique.mockResolvedValue(posA);
       mockPrisma.warehousePosition.findFirst.mockResolvedValue(posB);
-      mockPrisma.warehousePosition.update.mockImplementation(({ where, data }: any) => ({
-        ...where.id === 'a' ? posA : posB,
-        ...data,
-      }));
+      mockPrisma.warehousePosition.update.mockImplementation(
+        ({ where, data }: any) => ({
+          ...(where.id === 'a' ? posA : posB),
+          ...data,
+        }),
+      );
       mockPrisma.$transaction.mockResolvedValue([
         { ...posA, row: 1, column: 1 },
         { ...posB, row: 0, column: 0 },

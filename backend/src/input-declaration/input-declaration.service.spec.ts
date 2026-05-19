@@ -19,7 +19,12 @@ describe('InputDeclarationService', () => {
 
   beforeEach(async () => {
     prisma = {
-      $transaction: jest.fn().mockImplementation(async (callback: (tx: Record<string, unknown>) => Promise<unknown>) => callback(prisma)),
+      $transaction: jest
+        .fn()
+        .mockImplementation(
+          async (callback: (tx: Record<string, unknown>) => Promise<unknown>) =>
+            callback(prisma),
+        ),
       category: {
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -121,15 +126,17 @@ describe('InputDeclarationService', () => {
             async (name) => {
               const delegate = prisma[type] as Record<string, jest.Mock>;
               delegate.findFirst.mockResolvedValue(null);
-              delegate.create.mockImplementation(({ data }: { data: { name: string } }) => ({
-                id: 'test-id',
-                name: data.name,
-                createdAt: new Date(),
-              }));
+              delegate.create.mockImplementation(
+                ({ data }: { data: { name: string } }) => ({
+                  id: 'test-id',
+                  name: data.name,
+                  createdAt: new Date(),
+                }),
+              );
 
               const result = await service.create(type, name);
               expect(result).toBeDefined();
-              expect(result.name).toBe(name.trim());
+              expect(result!.name).toBe(name.trim());
               expect(delegate.create).toHaveBeenCalled();
             },
           ),
@@ -148,16 +155,13 @@ describe('InputDeclarationService', () => {
       'should reject %s with empty/whitespace name',
       async (type) => {
         await fc.assert(
-          fc.asyncProperty(
-            fc.stringOf(fc.constant(' ')),
-            async (name) => {
-              await expect(service.create(type, name)).rejects.toThrow(
-                BadRequestException,
-              );
-              const delegate = prisma[type] as Record<string, jest.Mock>;
-              expect(delegate.create).not.toHaveBeenCalled();
-            },
-          ),
+          fc.asyncProperty(fc.stringOf(fc.constant(' ')), async (name) => {
+            await expect(service.create(type, name)).rejects.toThrow(
+              BadRequestException,
+            );
+            const delegate = prisma[type] as Record<string, jest.Mock>;
+            expect(delegate.create).not.toHaveBeenCalled();
+          }),
           { numRuns: 100 },
         );
       },
@@ -165,34 +169,28 @@ describe('InputDeclarationService', () => {
 
     it('should reject ProductCondition with empty/whitespace name', async () => {
       await fc.assert(
-        fc.asyncProperty(
-          fc.stringOf(fc.constant(' ')),
-          async (name) => {
-            await expect(
-              service.createProductCondition(name),
-            ).rejects.toThrow(BadRequestException);
-            expect(
-              (prisma.productCondition as Record<string, jest.Mock>).create,
-            ).not.toHaveBeenCalled();
-          },
-        ),
+        fc.asyncProperty(fc.stringOf(fc.constant(' ')), async (name) => {
+          await expect(service.createProductCondition(name)).rejects.toThrow(
+            BadRequestException,
+          );
+          expect(
+            (prisma.productCondition as Record<string, jest.Mock>).create,
+          ).not.toHaveBeenCalled();
+        }),
         { numRuns: 100 },
       );
     });
 
     it('should reject StorageZone with empty/whitespace name', async () => {
       await fc.assert(
-        fc.asyncProperty(
-          fc.stringOf(fc.constant(' ')),
-          async (name) => {
-            await expect(
-              service.createStorageZone(name, 100),
-            ).rejects.toThrow(BadRequestException);
-            expect(
-              (prisma.storageZone as Record<string, jest.Mock>).create,
-            ).not.toHaveBeenCalled();
-          },
-        ),
+        fc.asyncProperty(fc.stringOf(fc.constant(' ')), async (name) => {
+          await expect(service.createStorageZone(name, 100)).rejects.toThrow(
+            BadRequestException,
+          );
+          expect(
+            (prisma.storageZone as Record<string, jest.Mock>).create,
+          ).not.toHaveBeenCalled();
+        }),
         { numRuns: 100 },
       );
     });
@@ -209,7 +207,7 @@ describe('InputDeclarationService', () => {
         await fc.assert(
           fc.asyncProperty(
             fc.string({ minLength: 1 }).filter((s) => s.trim().length > 0),
-            fc.constantFrom('toLowerCase', 'toUpperCase') as fc.Arbitrary<'toLowerCase' | 'toUpperCase'>,
+            fc.constantFrom('toLowerCase', 'toUpperCase'),
             async (name, caseMethod) => {
               const delegate = prisma[type] as Record<string, jest.Mock>;
               // First call succeeds
@@ -227,7 +225,7 @@ describe('InputDeclarationService', () => {
                 name: name.trim(),
               });
 
-              const variant = name.trim()[caseMethod]();
+              const variant = (name.trim() as unknown as Record<string, () => string>)[caseMethod]();
               await expect(service.create(type, variant)).rejects.toThrow(
                 ConflictException,
               );
@@ -257,14 +255,16 @@ describe('InputDeclarationService', () => {
                 ' '.repeat(leadingSpaces) + name + ' '.repeat(trailingSpaces);
               const delegate = prisma[type] as Record<string, jest.Mock>;
               delegate.findFirst.mockResolvedValue(null);
-              delegate.create.mockImplementation(({ data }: { data: { name: string } }) => ({
-                id: 'test-id',
-                name: data.name,
-                createdAt: new Date(),
-              }));
+              delegate.create.mockImplementation(
+                ({ data }: { data: { name: string } }) => ({
+                  id: 'test-id',
+                  name: data.name,
+                  createdAt: new Date(),
+                }),
+              );
 
               const result = await service.create(type, padded);
-              expect(result.name).toBe(padded.trim());
+              expect(result!.name).toBe(padded.trim());
             },
           ),
           { numRuns: 100 },
@@ -280,17 +280,14 @@ describe('InputDeclarationService', () => {
   describe('P8: Reject invalid maxCapacity', () => {
     it('should reject StorageZone with maxCapacity <= 0', async () => {
       await fc.assert(
-        fc.asyncProperty(
-          fc.integer({ max: 0 }),
-          async (maxCapacity) => {
-            await expect(
-              service.createStorageZone('Valid Zone', maxCapacity),
-            ).rejects.toThrow(BadRequestException);
-            expect(
-              (prisma.storageZone as Record<string, jest.Mock>).create,
-            ).not.toHaveBeenCalled();
-          },
-        ),
+        fc.asyncProperty(fc.integer({ max: 0 }), async (maxCapacity) => {
+          await expect(
+            service.createStorageZone('Valid Zone', maxCapacity),
+          ).rejects.toThrow(BadRequestException);
+          expect(
+            (prisma.storageZone as Record<string, jest.Mock>).create,
+          ).not.toHaveBeenCalled();
+        }),
         { numRuns: 100 },
       );
     });
@@ -304,7 +301,9 @@ describe('InputDeclarationService', () => {
         { id: '1', name: 'Kho sản xuất', createdAt: new Date() },
         { id: '2', name: 'Kho lẻ', createdAt: new Date() },
       ];
-      (prisma.warehouseType as Record<string, jest.Mock>).findMany.mockResolvedValue(mockTypes);
+      (
+        prisma.warehouseType as Record<string, jest.Mock>
+      ).findMany.mockResolvedValue(mockTypes);
 
       const result = await service.getAllWarehouseTypes();
       expect(result).toEqual(mockTypes);
@@ -317,16 +316,22 @@ describe('InputDeclarationService', () => {
     });
 
     it('should reject empty warehouse type name', async () => {
-      await expect(service.createWarehouseType('   ')).rejects.toThrow(BadRequestException);
+      await expect(service.createWarehouseType('   ')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should reject duplicate warehouse type name (case-insensitive)', async () => {
-      (prisma.warehouseType as Record<string, jest.Mock>).findFirst.mockResolvedValue({
+      (
+        prisma.warehouseType as Record<string, jest.Mock>
+      ).findFirst.mockResolvedValue({
         id: 'existing',
         name: 'Kho sản xuất',
       });
 
-      await expect(service.createWarehouseType('kho sản xuất')).rejects.toThrow(ConflictException);
+      await expect(service.createWarehouseType('kho sản xuất')).rejects.toThrow(
+        ConflictException,
+      );
     });
   });
 
@@ -376,9 +381,13 @@ describe('InputDeclarationService', () => {
       expect(result.success).toBe(true);
       expect(result.createdCounts.categories).toBe(1);
       expect(result.createdCounts.storageZones).toBe(1);
-      expect((prisma.category as Record<string, jest.Mock>).create).toHaveBeenCalled();
-      expect((prisma.storageZone as Record<string, jest.Mock>).create).toHaveBeenCalled();
-      expect((prisma.$transaction as jest.Mock)).toHaveBeenCalled();
+      expect(
+        (prisma.category as Record<string, jest.Mock>).create,
+      ).toHaveBeenCalled();
+      expect(
+        (prisma.storageZone as Record<string, jest.Mock>).create,
+      ).toHaveBeenCalled();
+      expect(prisma.$transaction as jest.Mock).toHaveBeenCalled();
     });
 
     it('should return validation errors when storage zone capacity is missing', async () => {

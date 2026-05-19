@@ -1,3 +1,6 @@
+-- Make productId nullable first (required before SET NULL FK can be applied)
+ALTER TABLE `stocktaking_items` MODIFY `productId` VARCHAR(191) NULL;
+
 -- DropForeignKey
 ALTER TABLE `stocktaking_items` DROP FOREIGN KEY `stocktaking_items_productId_fkey`;
 

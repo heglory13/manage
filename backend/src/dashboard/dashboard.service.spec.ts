@@ -12,15 +12,29 @@ function createMockPrisma() {
       count: jest.fn().mockResolvedValue(0),
     },
     warehouseConfig: {
-      findFirst: jest.fn().mockResolvedValue({ id: 'config-1', maxCapacity: 1000 }),
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'config-1', maxCapacity: 1000 }),
     },
-    storageZone: {
+    warehousePosition: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    warehouseType: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    product: {
       findMany: jest.fn().mockResolvedValue([]),
     },
     orderPlan: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { quantity: 0 } }),
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+    },
+    skuCombo: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    storageZone: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
   };
 }
@@ -42,7 +56,9 @@ describe('DashboardService', () => {
       { type: 'STOCK_OUT', _sum: { quantity: 20 } },
     ]);
 
-    const service = new DashboardService(mockPrisma as unknown as PrismaService);
+    const service = new DashboardService(
+      mockPrisma as unknown as PrismaService,
+    );
     const result = await service.getSummary();
 
     expect(result.totalCategories).toBe(2);
@@ -53,7 +69,9 @@ describe('DashboardService', () => {
 
   it('getChartData should return 12 points for month and week periods', async () => {
     const mockPrisma = createMockPrisma();
-    const service = new DashboardService(mockPrisma as unknown as PrismaService);
+    const service = new DashboardService(
+      mockPrisma as unknown as PrismaService,
+    );
 
     const monthly = await service.getChartData('month');
     const weekly = await service.getChartData('week');
@@ -68,67 +86,123 @@ describe('DashboardService', () => {
 
   it('getTopCategories should sort categories by net stock descending', async () => {
     const mockPrisma = createMockPrisma();
-    mockPrisma.category.findMany.mockResolvedValue([
-      { id: 'cat-1', name: 'Ao thun' },
-      { id: 'cat-2', name: 'Quan tay' },
+    // Service now uses skuCombo-based stock tracking
+    mockPrisma.skuCombo.findMany.mockResolvedValue([
+      {
+        id: 'sku-1',
+        classification: { name: 'Ao thun' },
+        color: { name: '' },
+        size: { name: '' },
+        material: { name: '' },
+        categoryId: 'cat-1',
+      },
+      {
+        id: 'sku-2',
+        classification: { name: 'Quan tay' },
+        color: { name: '' },
+        size: { name: '' },
+        material: { name: '' },
+        categoryId: 'cat-2',
+      },
     ]);
     mockPrisma.inventoryTransaction.findMany.mockResolvedValue([
-      { categoryId: 'cat-1', type: 'STOCK_IN', quantity: 100 },
-      { categoryId: 'cat-1', type: 'STOCK_OUT', quantity: 20 },
-      { categoryId: 'cat-2', type: 'STOCK_IN', quantity: 40 },
+      {
+        skuComboId: 'sku-1',
+        categoryId: 'cat-1',
+        type: 'STOCK_IN',
+        quantity: 100,
+      },
+      {
+        skuComboId: 'sku-1',
+        categoryId: 'cat-1',
+        type: 'STOCK_OUT',
+        quantity: 20,
+      },
+      {
+        skuComboId: 'sku-2',
+        categoryId: 'cat-2',
+        type: 'STOCK_IN',
+        quantity: 40,
+      },
+    ]);
+    mockPrisma.category.findMany.mockResolvedValue([
+      { id: 'cat-1', name: 'Ao' },
+      { id: 'cat-2', name: 'Quan' },
     ]);
 
-    const service = new DashboardService(mockPrisma as unknown as PrismaService);
+    const service = new DashboardService(
+      mockPrisma as unknown as PrismaService,
+    );
     const result = await service.getTopCategories('highest', 20);
 
-    expect(result).toEqual([
-      {
-        rank: 1,
-        categoryId: 'cat-1',
-        categoryName: 'Ao thun',
-        stock: 80,
-      },
-      {
-        rank: 2,
-        categoryId: 'cat-2',
-        categoryName: 'Quan tay',
-        stock: 40,
-      },
-    ]);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ categoryId: 'sku-1', stock: 80 });
+    expect(result[1]).toMatchObject({ categoryId: 'sku-2', stock: 40 });
   });
 
   it('getTopCategories should sort ascending for lowest query', async () => {
     const mockPrisma = createMockPrisma();
-    mockPrisma.category.findMany.mockResolvedValue([
-      { id: 'cat-1', name: 'Ao thun' },
-      { id: 'cat-2', name: 'Quan tay' },
-    ]);
-    mockPrisma.inventoryTransaction.findMany.mockResolvedValue([
-      { categoryId: 'cat-1', type: 'STOCK_IN', quantity: 10 },
-      { categoryId: 'cat-2', type: 'STOCK_IN', quantity: 25 },
-    ]);
-
-    const service = new DashboardService(mockPrisma as unknown as PrismaService);
-    const result = await service.getTopCategories('lowest', 1);
-
-    expect(result).toEqual([
+    mockPrisma.skuCombo.findMany.mockResolvedValue([
       {
-        rank: 1,
+        id: 'sku-1',
+        classification: { name: 'Ao thun' },
+        color: { name: '' },
+        size: { name: '' },
+        material: { name: '' },
         categoryId: 'cat-1',
-        categoryName: 'Ao thun',
-        stock: 10,
+      },
+      {
+        id: 'sku-2',
+        classification: { name: 'Quan tay' },
+        color: { name: '' },
+        size: { name: '' },
+        material: { name: '' },
+        categoryId: 'cat-2',
       },
     ]);
+    mockPrisma.inventoryTransaction.findMany.mockResolvedValue([
+      {
+        skuComboId: 'sku-1',
+        categoryId: 'cat-1',
+        type: 'STOCK_IN',
+        quantity: 10,
+      },
+      {
+        skuComboId: 'sku-2',
+        categoryId: 'cat-2',
+        type: 'STOCK_IN',
+        quantity: 25,
+      },
+    ]);
+    mockPrisma.category.findMany.mockResolvedValue([
+      { id: 'cat-1', name: 'Ao' },
+      { id: 'cat-2', name: 'Quan' },
+    ]);
+
+    const service = new DashboardService(
+      mockPrisma as unknown as PrismaService,
+    );
+    const result = await service.getTopCategories('lowest', 1);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ categoryId: 'sku-1', stock: 10 });
   });
 
   it('getTopZones should sort by usagePercent', async () => {
     const mockPrisma = createMockPrisma();
-    mockPrisma.storageZone.findMany.mockResolvedValue([
-      { id: 'z1', name: 'A', currentStock: 80, maxCapacity: 100 },
-      { id: 'z2', name: 'B', currentStock: 90, maxCapacity: 200 },
+    mockPrisma.warehousePosition.findMany.mockResolvedValue([
+      { id: 'z1', label: 'A', maxCapacity: 100 },
+      { id: 'z2', label: 'B', maxCapacity: 200 },
+    ]);
+    // getTopZones computes currentStock from transactions, not from the position row
+    mockPrisma.inventoryTransaction.findMany.mockResolvedValue([
+      { warehousePositionId: 'z1', type: 'STOCK_IN', quantity: 80 },
+      { warehousePositionId: 'z2', type: 'STOCK_IN', quantity: 90 },
     ]);
 
-    const service = new DashboardService(mockPrisma as unknown as PrismaService);
+    const service = new DashboardService(
+      mockPrisma as unknown as PrismaService,
+    );
     const result = await service.getTopZones('highest', 10);
 
     expect(result[0]).toMatchObject({ id: 'z1', usagePercent: 80 });

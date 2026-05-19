@@ -30,8 +30,22 @@ describe('Warehouse PBT', () => {
           async ({ rowA, colA, rowB, colB, labelA, labelB }) => {
             fc.pre(rowA !== rowB || colA !== colB); // different positions
 
-            const posA = { id: 'a', layoutId: 'L1', row: rowA, column: colA, label: labelA, isActive: true };
-            const posB = { id: 'b', layoutId: 'L1', row: rowB, column: colB, label: labelB, isActive: true };
+            const posA = {
+              id: 'a',
+              layoutId: 'L1',
+              row: rowA,
+              column: colA,
+              label: labelA,
+              isActive: true,
+            };
+            const posB = {
+              id: 'b',
+              layoutId: 'L1',
+              row: rowB,
+              column: colB,
+              label: labelB,
+              isActive: true,
+            };
 
             let updatedA: Record<string, unknown> = {};
             let updatedB: Record<string, unknown> = {};
@@ -41,19 +55,26 @@ describe('Warehouse PBT', () => {
                 findUnique: jest.fn().mockResolvedValue(posA),
                 findFirst: jest.fn().mockResolvedValue(posB),
                 update: jest.fn().mockImplementation(({ where, data }: any) => {
-                  const result = { ...(where.id === 'a' ? posA : posB), ...data };
+                  const result = {
+                    ...(where.id === 'a' ? posA : posB),
+                    ...data,
+                  };
                   if (where.id === 'a') updatedA = result;
                   else updatedB = result;
                   return Promise.resolve(result);
                 }),
               },
-              $transaction: jest.fn().mockImplementation(async (ops: Promise<unknown>[]) => {
-                const results = await Promise.all(ops);
-                return results;
-              }),
+              $transaction: jest
+                .fn()
+                .mockImplementation(async (ops: Promise<unknown>[]) => {
+                  const results = await Promise.all(ops);
+                  return results;
+                }),
             };
 
-            const service = new WarehouseService(mockPrisma as unknown as PrismaService);
+            const service = new WarehouseService(
+              mockPrisma as unknown as PrismaService,
+            );
             await service.movePosition('a', rowB, colB);
 
             // A gets B's coordinates, B gets A's coordinates
@@ -94,9 +115,13 @@ describe('Warehouse PBT', () => {
               },
             };
 
-            const service = new WarehouseService(mockPrisma as unknown as PrismaService);
+            const service = new WarehouseService(
+              mockPrisma as unknown as PrismaService,
+            );
 
-            await expect(service.updateLabel('pos-1', label)).rejects.toThrow(BadRequestException);
+            await expect(service.updateLabel('pos-1', label)).rejects.toThrow(
+              BadRequestException,
+            );
             expect(mockPrisma.warehousePosition.update).not.toHaveBeenCalled();
           },
         ),
@@ -123,8 +148,12 @@ describe('Warehouse PBT', () => {
               },
             };
 
-            const service = new WarehouseService(mockPrisma as unknown as PrismaService);
-            await expect(service.updateCapacity('pos-1', invalidCapacity)).rejects.toThrow(BadRequestException);
+            const service = new WarehouseService(
+              mockPrisma as unknown as PrismaService,
+            );
+            await expect(
+              service.updateCapacity('pos-1', invalidCapacity),
+            ).rejects.toThrow(BadRequestException);
           },
         ),
       );

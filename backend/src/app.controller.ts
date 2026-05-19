@@ -43,7 +43,10 @@ export class AppController {
         destination: uploadsDir,
         filename: (_req, file, callback) => {
           const safeExt = extname(file.originalname) || '.bin';
-          callback(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${safeExt}`);
+          callback(
+            null,
+            `${Date.now()}-${Math.round(Math.random() * 1e9)}${safeExt}`,
+          );
         },
       }),
       limits: {
@@ -53,11 +56,10 @@ export class AppController {
   )
   uploadFile(@UploadedFile() file: Express.Multer.File, @Req() req: Request) {
     const proto =
-      (req.headers['x-forwarded-proto'] as string) ||
-      req.protocol ||
-      'http';
+      (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
     const host = req.headers.host;
-    const baseUrl = process.env.PUBLIC_API_URL?.replace(/\/+$/, '') || `${proto}://${host}`;
+    const baseUrl =
+      process.env.PUBLIC_API_URL?.replace(/\/+$/, '') || `${proto}://${host}`;
     return {
       url: `${baseUrl}/uploads/${file.filename}`,
       filename: file.filename,

@@ -94,11 +94,15 @@ export function buildInventoryValuationBuckets(
       (!endDate || row.createdAt <= endDate);
 
     if (row.type === TransactionType.STOCK_IN) {
-      const inboundValue = roundCurrency(row.quantity * (row.purchasePrice ?? 0));
+      const inboundValue = roundCurrency(
+        row.quantity * (row.purchasePrice ?? 0),
+      );
       bucket.closingQty += row.quantity;
       bucket.closingValue = roundCurrency(bucket.closingValue + inboundValue);
       bucket.averageCost =
-        bucket.closingQty > 0 ? roundCurrency(bucket.closingValue / bucket.closingQty) : 0;
+        bucket.closingQty > 0
+          ? roundCurrency(bucket.closingValue / bucket.closingQty)
+          : 0;
 
       if (isBeforePeriod) {
         bucket.openingQty += row.quantity;
@@ -120,17 +124,23 @@ export function buildInventoryValuationBuckets(
         bucket.closingValue = 0;
         bucket.averageCost = 0;
       } else {
-        bucket.averageCost = roundCurrency(bucket.closingValue / bucket.closingQty);
+        bucket.averageCost = roundCurrency(
+          bucket.closingValue / bucket.closingQty,
+        );
       }
 
       if (isBeforePeriod) {
         bucket.openingQty -= row.quantity;
-        bucket.openingValue = roundCurrency(bucket.openingValue - outboundValue);
+        bucket.openingValue = roundCurrency(
+          bucket.openingValue - outboundValue,
+        );
       }
 
       if (isInPeriod) {
         bucket.totalOutQty += row.quantity;
-        bucket.totalOutValue = roundCurrency(bucket.totalOutValue + outboundValue);
+        bucket.totalOutValue = roundCurrency(
+          bucket.totalOutValue + outboundValue,
+        );
       }
     }
   }

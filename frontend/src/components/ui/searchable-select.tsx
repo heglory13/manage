@@ -4,6 +4,7 @@ import { ChevronDown, X } from 'lucide-react';
 interface Option {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 interface SearchableSelectProps {
@@ -29,14 +30,14 @@ export function SearchableSelect({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selectedOption = useMemo(
-    () => options.find((o) => o.value === value),
+    () => options.find((option) => option.value === value),
     [options, value],
   );
 
-  const filtered = useMemo(() => {
+  const filteredOptions = useMemo(() => {
     if (!search) return options;
-    const q = search.toLowerCase();
-    return options.filter((o) => o.label.toLowerCase().includes(q));
+    const query = search.toLowerCase();
+    return options.filter((option) => option.label.toLowerCase().includes(query));
   }, [options, search]);
 
   useEffect(() => {
@@ -46,12 +47,14 @@ export function SearchableSelect({
         setSearch('');
       }
     };
+
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSelect = (opt: Option) => {
-    onChange(opt.value);
+  const handleSelect = (option: Option) => {
+    if (option.disabled) return;
+    onChange(option.value);
     setIsOpen(false);
     setSearch('');
   };
@@ -71,22 +74,21 @@ export function SearchableSelect({
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
-      {/* Display / trigger */}
       <button
         type="button"
-        className={`form-select flex w-full items-center justify-between text-left ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+        className={`form-select flex w-full items-center justify-between text-left ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
         onClick={handleOpen}
         disabled={disabled}
       >
-        <span className={`truncate flex-1 min-w-0 ${selectedOption ? 'text-slate-900' : 'text-slate-400'}`}>
+        <span className={`min-w-0 flex-1 truncate ${selectedOption ? 'text-slate-900' : 'text-slate-400'}`}>
           {selectedOption?.label || placeholder}
         </span>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex flex-shrink-0 items-center gap-1">
           {value && (
             <span
               role="button"
               tabIndex={-1}
-              className="rounded p-0.5 hover:bg-slate-200 text-slate-400"
+              className="rounded p-0.5 text-slate-400 hover:bg-slate-200"
               onClick={handleClear}
               onKeyDown={() => {}}
             >
@@ -97,10 +99,8 @@ export function SearchableSelect({
         </div>
       </button>
 
-      {/* Dropdown */}
       {isOpen && (
-        <div className="absolute z-50 left-0 right-0 top-full mt-1 rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden">
-          {/* Search input */}
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
           <div className="border-b border-slate-100 p-2">
             <input
               ref={inputRef}
@@ -112,19 +112,25 @@ export function SearchableSelect({
             />
           </div>
 
-          {/* Options */}
           <div className="max-h-48 overflow-auto">
-            {filtered.length === 0 ? (
+            {filteredOptions.length === 0 ? (
               <div className="px-4 py-3 text-sm text-slate-400">Không tìm thấy</div>
             ) : (
-              filtered.map((opt) => (
+              filteredOptions.map((option) => (
                 <button
-                  key={opt.value}
+                  key={option.value}
                   type="button"
-                  className={`w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 ${opt.value === value ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-800'}`}
-                  onClick={() => handleSelect(opt)}
+                  disabled={option.disabled}
+                  className={`w-full px-4 py-2.5 text-left text-sm ${
+                    option.disabled
+                      ? 'cursor-not-allowed text-slate-400 italic'
+                      : option.value === value
+                        ? 'bg-indigo-50 font-medium text-indigo-700 hover:bg-indigo-100'
+                        : 'text-slate-800 hover:bg-slate-50'
+                  }`}
+                  onClick={() => handleSelect(option)}
                 >
-                  {opt.label}
+                  {option.label}
                 </button>
               ))
             )}

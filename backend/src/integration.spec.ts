@@ -34,11 +34,17 @@ describe('Integration: Warehouse flow', () => {
 
     const mockPrisma: any = {
       warehousePosition: {
-        findUnique: jest.fn().mockImplementation(({ where }: any) =>
-          Promise.resolve(positions.find((p) => p.id === where.id) ?? null),
-        ),
+        findUnique: jest
+          .fn()
+          .mockImplementation(({ where }: any) =>
+            Promise.resolve(positions.find((p) => p.id === where.id) ?? null),
+          ),
         findFirst: jest.fn().mockImplementation(({ where }: any) => {
-          if (where.layoutId && where.row !== undefined && where.column !== undefined) {
+          if (
+            where.layoutId &&
+            where.row !== undefined &&
+            where.column !== undefined
+          ) {
             return Promise.resolve(
               positions.find(
                 (p) =>
@@ -50,7 +56,9 @@ describe('Integration: Warehouse flow', () => {
           }
           if (where.label) {
             return Promise.resolve(
-              positions.find((p) => p.label === where.label && p.id !== where.id?.not) ?? null,
+              positions.find(
+                (p) => p.label === where.label && p.id !== where.id?.not,
+              ) ?? null,
             );
           }
           return Promise.resolve(null);
@@ -64,9 +72,9 @@ describe('Integration: Warehouse flow', () => {
       storageZone: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
-      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) =>
-        Promise.all(ops),
-      ),
+      $transaction: jest
+        .fn()
+        .mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
 
     const service = new WarehouseService(mockPrisma as PrismaService);
@@ -121,22 +129,53 @@ describe('Integration: Stocktaking V2 flow', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
       inventoryTransaction: {
-        findFirst: jest.fn().mockImplementation(({ where }: any) =>
-          Promise.resolve(
-            stockState.has(where.categoryId)
-              ? { purchasePrice: 100, salePrice: 120 }
-              : null,
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: any) =>
+            Promise.resolve(
+              stockState.has(where.categoryId)
+                ? { purchasePrice: 100, salePrice: 120 }
+                : null,
+            ),
           ),
-        ),
+        findMany: jest.fn().mockImplementation(({ where }: any) => {
+          // Return category transactions for stocktaking snapshot
+          const catIds: string[] =
+            where?.categoryId?.in ?? categories.map((c) => c.id);
+          return Promise.resolve(
+            catIds.flatMap((catId) => {
+              const stock = stockState.get(catId) ?? 0;
+              if (stock === 0) return [];
+              return [
+                {
+                  categoryId: catId,
+                  type: 'STOCK_IN',
+                  quantity: stock,
+                  status: 'ACTIVE',
+                  skuComboId: null,
+                  storageZoneId: null,
+                },
+              ];
+            }),
+          );
+        }),
         create: jest.fn().mockImplementation(({ data }: any) => {
           createdTransactions.push(data);
           const current = stockState.get(data.categoryId) ?? 0;
           stockState.set(
             data.categoryId,
-            data.type === 'STOCK_IN' ? current + data.quantity : current - data.quantity,
+            data.type === 'STOCK_IN'
+              ? current + data.quantity
+              : current - data.quantity,
           );
-          return Promise.resolve({ id: `txn-${createdTransactions.length}`, ...data });
+          return Promise.resolve({
+            id: `txn-${createdTransactions.length}`,
+            ...data,
+          });
         }),
+      },
+      skuCombo: {
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       stocktakingRecord: {
         create: jest.fn().mockImplementation(({ data }: any) => {
@@ -180,15 +219,36 @@ describe('Integration: Stocktaking V2 flow', () => {
         create: jest.fn().mockResolvedValue({ id: 'h-1' }),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) =>
-        Promise.all(ops),
-      ),
+      $transaction: jest
+        .fn()
+        .mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
 
     const mockInventoryService = {
-      getCurrentStockByCategory: jest.fn().mockImplementation((categoryId: string) =>
-        Promise.resolve(stockState.get(categoryId) ?? 0),
-      ),
+      getCurrentStockByCategory: jest
+        .fn()
+        .mockImplementation((categoryId: string) =>
+          Promise.resolve(stockState.get(categoryId) ?? 0),
+        ),
+      balanceStockByCategory: jest
+        .fn()
+        .mockImplementation(
+          async (
+            categoryId: string,
+            qty: number,
+            direction: 'INCREASE' | 'DECREASE',
+          ) => {
+            const txType = direction === 'INCREASE' ? 'STOCK_IN' : 'STOCK_OUT';
+            const data = { categoryId, type: txType, quantity: qty };
+            createdTransactions.push(data);
+            const cur = stockState.get(categoryId) ?? 0;
+            stockState.set(
+              categoryId,
+              direction === 'INCREASE' ? cur + qty : cur - qty,
+            );
+            return { id: `adj-${createdTransactions.length}`, ...data };
+          },
+        ),
     };
 
     const service = new StocktakingService(
@@ -211,7 +271,10 @@ describe('Integration: Stocktaking V2 flow', () => {
         evidenceUrl: null,
       })),
     });
-    mockPrisma.stocktakingRecord.update.mockResolvedValue({ id: 'r-1', status: 'PENDING' });
+    mockPrisma.stocktakingRecord.update.mockResolvedValue({
+      id: 'r-1',
+      status: 'PENDING',
+    });
     mockPrisma.stocktakingRecord.findUnique.mockResolvedValueOnce({
       id: 'r-1',
       status: 'CHECKING',
@@ -275,7 +338,9 @@ describe('Integration: Preliminary -> Detail flow', () => {
         findUnique: jest.fn().mockResolvedValue({ id: 'cls-1', name: 'Áo' }),
       },
       warehouseType: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'wt-1', name: 'Kho sản xuất' }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'wt-1', name: 'Kho sản xuất' }),
       },
       preliminaryCheck: {
         create: jest.fn().mockImplementation(({ data }: any) =>
@@ -308,7 +373,9 @@ describe('Integration: NXT Report flow', () => {
   it('getNxtReport maintains closingStock = openingStock + totalIn - totalOut', async () => {
     const mockPrisma: any = {
       category: {
-        findMany: jest.fn().mockResolvedValue([{ id: 'c1', name: 'Danh mục 1' }]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'c1', name: 'Danh mục 1' }]),
       },
       inventoryTransaction: {
         findMany: jest.fn().mockResolvedValue([
@@ -357,7 +424,9 @@ describe('Integration: NXT Report flow', () => {
     expect(item.totalIn).toBe(50);
     expect(item.totalOut).toBe(20);
     expect(item.closingStock).toBe(100);
-    expect(item.closingStock).toBe(item.openingStock + item.totalIn - item.totalOut);
+    expect(item.closingStock).toBe(
+      item.openingStock + item.totalIn - item.totalOut,
+    );
   });
 });
 
@@ -370,15 +439,31 @@ describe('Integration: Excel Import flow', () => {
       conditions: new Map([['đạt tiêu chuẩn', 'cond-1']]),
     };
 
-    const result1 = service.validateImportRow({ category: '', quantity: 10 }, 2, lookups);
+    const result1 = service.validateImportRow(
+      { category: '', quantity: 10 },
+      2,
+      lookups,
+    );
     expect(result1.valid).toBe(false);
-    expect(result1.errors.some((error) => error.field === 'Danh mục')).toBe(true);
+    expect(result1.errors.some((error) => error.field === 'Danh mục')).toBe(
+      true,
+    );
 
-    const result2 = service.validateImportRow({ category: 'Áo', quantity: 0 }, 3, lookups);
+    const result2 = service.validateImportRow(
+      { category: 'Áo', quantity: 0 },
+      3,
+      lookups,
+    );
     expect(result2.valid).toBe(false);
-    expect(result2.errors.some((error) => error.field === 'Số lượng')).toBe(true);
+    expect(result2.errors.some((error) => error.field === 'Số lượng')).toBe(
+      true,
+    );
 
-    const result3 = service.validateImportRow({ category: 'Áo', quantity: 10 }, 4, lookups);
+    const result3 = service.validateImportRow(
+      { category: 'Áo', quantity: 10 },
+      4,
+      lookups,
+    );
     expect(result3.valid).toBe(true);
   });
 });
@@ -391,7 +476,11 @@ describe('Integration: Guard rails', () => {
       },
     } as any);
 
-    await expect(service.movePosition('missing', 0, 0)).rejects.toThrow(NotFoundException);
-    await expect(service.updateCapacity('missing', 0)).rejects.toThrow(NotFoundException);
+    await expect(service.movePosition('missing', 0, 0)).rejects.toThrow(
+      NotFoundException,
+    );
+    await expect(service.updateCapacity('missing', 0)).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });

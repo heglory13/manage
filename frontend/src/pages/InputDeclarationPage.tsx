@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import AppLayout from '../components/layout/AppLayout';
+import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import { formatDateTime } from '../lib/utils';
 import { Button } from '../components/ui/button';
@@ -8,7 +9,7 @@ import { Label } from '../components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Check, Pencil, Trash2, X } from 'lucide-react';
+import { Check, Download, Pencil, Trash2, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface DeclarationsData {
@@ -19,7 +20,7 @@ interface DeclarationsData {
   materials: { id: string; name: string; createdAt: string }[];
   productConditions: { id: string; name: string; createdAt: string }[];
   warehouseTypes: { id: string; name: string; createdAt: string }[];
-  storageZones: { id: string; name: string; maxCapacity: number; currentStock: number; createdAt: string }[];
+  storageZones: { id: string; name: string; maxCapacity: number; currentStock: number; warehouseTypeId?: string; createdAt: string }[];
 }
 
 interface SkuCombo {
@@ -69,6 +70,12 @@ const ENDPOINT_MAP: Record<ColumnKey, string> = {
 };
 
 export default function InputDeclarationPage() {
+  const { user } = useAuth();
+  const canCreate = user?.permissions?.input?.create ?? false;
+  const canEdit = user?.permissions?.input?.edit ?? false;
+  const canDelete = user?.permissions?.input?.delete ?? false;
+  const canSave = user?.permissions?.input?.save ?? false;
+
   const [activeTab, setActiveTab] = useState('declarations');
   const [declarations, setDeclarations] = useState<DeclarationsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -82,6 +89,7 @@ export default function InputDeclarationPage() {
     return init as Record<ColumnKey, string>;
   });
   const [newCapacity, setNewCapacity] = useState<Record<string, string>>({});
+  const [newZoneWarehouseTypeId, setNewZoneWarehouseTypeId] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importResult, setImportResult] = useState<{
@@ -121,6 +129,7 @@ export default function InputDeclarationPage() {
     id: string;
     name: string;
     maxCapacity?: string;
+    warehouseTypeId?: string;
   } | null>(null);
 
   const fetchDeclarations = useCallback(async () => {
@@ -155,10 +164,19 @@ export default function InputDeclarationPage() {
   const fetchThresholds = useCallback(async (page = 1, search = '') => {
     setThresholdLoading(true);
     try {
-      const res = await api.get('/products', {
+      const res = await api.get('/inventory/by-sku', {
         params: { page, limit: thresholdLimit, search },
       });
-      setThresholds(res.data.data || []);
+      const data = (res.data.data || []).map((item: any) => ({
+        id: item.skuComboId || item.key || '',
+        name: item.productName || '-',
+        sku: item.sku || '-',
+        stock: item.stock || 0,
+        minThreshold: item.minThreshold || 0,
+        maxThreshold: item.maxThreshold || 0,
+        category: { name: item.categoryName || '-' },
+      }));
+      setThresholds(data);
       setThresholdTotal(res.data.total || 0);
       setThresholdPage(page);
     } catch (err) {
@@ -193,7 +211,7 @@ export default function InputDeclarationPage() {
           alert('Vui lòng nhập sức chứa hợp lệ (số nguyên > 0)');
           return;
         }
-        payload = { name: value, maxCapacity: capacity };
+        payload = { name: value, maxCapacity: capacity, warehouseTypeId: newZoneWarehouseTypeId || undefined };
       }
 
       await api.post(endpoint, payload);
@@ -202,6 +220,7 @@ export default function InputDeclarationPage() {
       setNewItems(prev => ({ ...prev, [column]: '' }));
       if (column === 'storageZones') {
         setNewCapacity(prev => ({ ...prev, storageZones: '' }));
+        setNewZoneWarehouseTypeId('');
       }
 
       // Refresh data
@@ -231,6 +250,7 @@ export default function InputDeclarationPage() {
       id: item.id,
       name: item.name,
       maxCapacity: column === 'storageZones' ? String(item.maxCapacity ?? '') : undefined,
+      warehouseTypeId: column === 'storageZones' ? (item.warehouseTypeId || '') : undefined,
     });
   };
 
@@ -257,7 +277,7 @@ export default function InputDeclarationPage() {
           alert('Vui lòng nhập sức chứa hợp lệ');
           return;
         }
-        payload = { name: trimmedName, maxCapacity: parsedCapacity };
+        payload = { name: trimmedName, maxCapacity: parsedCapacity, warehouseTypeId: editingDeclaration.warehouseTypeId || undefined };
       }
 
       await api.patch(`${endpoint}/${editingDeclaration.id}`, payload);
@@ -357,9 +377,16 @@ export default function InputDeclarationPage() {
       alert('Ngưỡng Max phải là số không âm');
       return;
     }
+    if (maxVal > 0 && minVal > maxVal) {
+      alert('Ngưỡng Min không được lớn hơn Ngưỡng Max');
+      return;
+    }
 
     try {
-      await api.patch(`/products/${id}`, { minThreshold: minVal, maxThreshold: maxVal });
+      await api.patch(`/input-declarations/sku-combos/${id}/threshold`, {
+        minThreshold: minVal,
+        maxThreshold: maxVal,
+      });
       cancelEditThreshold();
       fetchThresholds(thresholdPage, thresholdSearch);
     } catch (err: any) {
@@ -367,22 +394,71 @@ export default function InputDeclarationPage() {
     }
   };
 
+  // Export all declarations to Excel with separate sheets
+  const handleExportDeclarations = () => {
+    if (!declarations) return;
+    try {
+      const {
+        categories, classifications, colors, sizes,
+        materials, productConditions, storageZones, warehouseTypes,
+      } = declarations;
+
+      const maxLen = Math.max(
+        categories.length, classifications.length, colors.length,
+        sizes.length, materials.length, productConditions.length,
+        storageZones.length, warehouseTypes.length,
+      );
+
+      const rows: Record<string, string | number>[] = [];
+      for (let i = 0; i < maxLen; i++) {
+        rows.push({
+          'Danh muc': categories[i]?.name ?? '',
+          'Phan loai': classifications[i]?.name ?? '',
+          'Mau sac': colors[i]?.name ?? '',
+          'Kich thuoc': sizes[i]?.name ?? '',
+          'Chat lieu': materials[i]?.name ?? '',
+          'Tinh trang hang hoa': productConditions[i]?.name ?? '',
+          'Khu vuc hang hoa': storageZones[i]?.name ?? '',
+          'Suc chua khu vuc': storageZones[i]?.maxCapacity ?? '',
+          'Loai kho': warehouseTypes[i]?.name ?? '',
+        });
+      }
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Khai bao input');
+      XLSX.writeFile(wb, 'khai-bao-input.xlsx');
+    } catch (err) {
+      console.error('Export declarations error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
   // Export SKU combos to Excel
   const exportSkuCombos = () => {
-    if (skuCombos.length === 0) return;
-    const exportData = skuCombos.map((sku, idx) => ({
-      'STT': idx + 1 + (skuPage - 1) * skuLimit,
-      'Phân loại': sku.classification?.name || '',
-      'Màu sắc': sku.color?.name || '',
-      'Kích thước': sku.size?.name || '',
-      'Chất liệu': sku.material?.name || '',
-      'SKU Tổng hợp': sku.compositeSku,
-    }));
+    if (skuCombos.length === 0) {
+      alert('Không có dữ liệu SKU để xuất. Vui lòng tải dữ liệu trước.');
+      return;
+    }
+    try {
+      const exportData = skuCombos.map((sku, idx) => ({
+        'STT': idx + 1 + (skuPage - 1) * skuLimit,
+        'Phân loại': sku.classification?.name || '',
+        'Màu sắc': sku.color?.name || '',
+        'Kích thước': sku.size?.name || '',
+        'Chất liệu': sku.material?.name || '',
+        'SKU Tổng hợp': sku.compositeSku,
+      }));
 
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'SKU Combos');
-    XLSX.writeFile(wb, 'sku-combos.xlsx');
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'SKU Combos');
+
+      XLSX.writeFile(wb, 'sku-combos.xlsx');
+    } catch (err) {
+      console.error('Export SKU error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    }
   };
 
   const renderDeclarationItem = (colKey: ColumnKey, item: any, hasCapacity?: boolean) => {
@@ -399,17 +475,29 @@ export default function InputDeclarationPage() {
               className="h-8 text-xs"
             />
             {hasCapacity && (
-              <Input
-                size="sm"
-                type="number"
-                min={1}
-                value={editingDeclaration.maxCapacity || ''}
-                onChange={(e) => setEditingDeclaration((prev) => (prev ? { ...prev, maxCapacity: e.target.value } : prev))}
-                className="h-8 text-xs"
-              />
+              <>
+                <Input
+                  size="sm"
+                  type="number"
+                  min={1}
+                  value={editingDeclaration.maxCapacity || ''}
+                  onChange={(e) => setEditingDeclaration((prev) => (prev ? { ...prev, maxCapacity: e.target.value } : prev))}
+                  className="h-8 text-xs"
+                />
+                <select
+                  value={editingDeclaration.warehouseTypeId || ''}
+                  onChange={(e) => setEditingDeclaration((prev) => (prev ? { ...prev, warehouseTypeId: e.target.value } : prev))}
+                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                >
+                  <option value="">-- Chọn loại kho --</option>
+                  {(declarations?.warehouseTypes || []).map((wt) => (
+                    <option key={wt.id} value={wt.id}>{wt.name}</option>
+                  ))}
+                </select>
+              </>
             )}
             <div className="flex items-center justify-end gap-1">
-              <Button size="sm" className="h-7 px-2" onClick={saveDeclarationEdit}>
+              <Button size="sm" className="h-7 px-2" onClick={saveDeclarationEdit} disabled={!canSave && !canEdit}>
                 <Check className="h-3.5 w-3.5" />
               </Button>
               <Button size="sm" variant="outline" className="h-7 px-2" onClick={cancelEditDeclaration}>
@@ -429,24 +517,29 @@ export default function InputDeclarationPage() {
             {hasCapacity && (
               <div className="text-muted-foreground text-[10px]">
                 Suc chua: {item.maxCapacity} | Hien tai: {item.currentStock || 0}
+                {item.warehouseTypeId && ` | ${declarations?.warehouseTypes?.find((wt) => wt.id === item.warehouseTypeId)?.name || ''}`}
               </div>
             )}
           </div>
           <div className="flex flex-shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100">
-            <button
-              onClick={() => startEditDeclaration(colKey, item)}
-              className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-              title="Sua"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => handleDelete(colKey, item.id)}
-              className="rounded p-1 text-red-500 hover:bg-red-50 hover:text-red-700"
-              title="Xoa"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => startEditDeclaration(colKey, item)}
+                className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                title="Sua"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={() => handleDelete(colKey, item.id)}
+                className="rounded p-1 text-red-500 hover:bg-red-50 hover:text-red-700"
+                title="Xoa"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -471,6 +564,12 @@ export default function InputDeclarationPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Khai báo Input</h1>
         <p className="text-muted text-sm">Quản lý các trường thông tin đầu vào cho quy trình nhập/xuất kho</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span>Ngưỡng tồn kho sản phẩm gồm cả Min và Max nằm ở tab `Ngưỡng Min/Max`.</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => setActiveTab('thresholds')}>
+            Mở tab Ngưỡng Min/Max
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -483,7 +582,7 @@ export default function InputDeclarationPage() {
         <TabsList className="mb-4">
           <TabsTrigger value="declarations">Khai báo trường</TabsTrigger>
           <TabsTrigger value="sku-combos">SKU Tổng hợp</TabsTrigger>
-          <TabsTrigger value="thresholds">Ngưỡng Min/Max</TabsTrigger>
+          <TabsTrigger value="thresholds">Ngưỡng tồn kho Min/Max</TabsTrigger>
         </TabsList>
 
         {/* TAB 1: Khai báo trường - 8 columns spreadsheet */}
@@ -520,6 +619,10 @@ export default function InputDeclarationPage() {
                       disabled={!importFile || importLoading}
                     >
                       {importLoading ? 'Dang import...' : 'Nhap Excel'}
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={handleExportDeclarations}>
+                      <Download size={16} />
+                      Xuất Excel
                     </Button>
                   </div>
                 </div>
@@ -641,22 +744,34 @@ export default function InputDeclarationPage() {
                               className="text-xs h-8"
                             />
                             {hasCapacity && (
-                              <Input
-                                size="sm"
-                                type="number"
-                                placeholder="Sức chứa..."
-                                value={newCapacity[colKey] || ''}
-                                onChange={(e) => setNewCapacity(prev => ({ ...prev, [colKey]: e.target.value }))}
-                                onKeyDown={(e) => handleKeyDown(e, colKey)}
-                                className="text-xs h-8"
-                                min={1}
-                              />
+                              <>
+                                <Input
+                                  size="sm"
+                                  type="number"
+                                  placeholder="Sức chứa..."
+                                  value={newCapacity[colKey] || ''}
+                                  onChange={(e) => setNewCapacity(prev => ({ ...prev, [colKey]: e.target.value }))}
+                                  onKeyDown={(e) => handleKeyDown(e, colKey)}
+                                  className="text-xs h-8"
+                                  min={1}
+                                />
+                                <select
+                                  value={newZoneWarehouseTypeId}
+                                  onChange={(e) => setNewZoneWarehouseTypeId(e.target.value)}
+                                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                                >
+                                  <option value="">-- Chọn loại kho --</option>
+                                  {(declarations?.warehouseTypes || []).map((wt) => (
+                                    <option key={wt.id} value={wt.id}>{wt.name}</option>
+                                  ))}
+                                </select>
+                              </>
                             )}
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={() => handleAdd(colKey)}
-                              disabled={!newItems[colKey]?.trim() || (hasCapacity && !newCapacity[colKey])}
+                              disabled={!canCreate || !newItems[colKey]?.trim() || (hasCapacity && !newCapacity[colKey])}
                               className="w-full text-xs h-8"
                             >
                               Thêm
@@ -886,7 +1001,7 @@ export default function InputDeclarationPage() {
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex gap-1">
-                                    <Button size="sm" variant="default" onClick={() => saveThreshold(item.id)} className="h-7 px-2">
+                                    <Button size="sm" variant="default" onClick={() => saveThreshold(item.id)} className="h-7 px-2" disabled={!canSave && !canEdit}>
                                       Lưu
                                     </Button>
                                     <Button size="sm" variant="outline" onClick={cancelEditThreshold} className="h-7 px-2">
@@ -900,14 +1015,16 @@ export default function InputDeclarationPage() {
                                 <TableCell className="text-right text-muted-foreground">{item.minThreshold}</TableCell>
                                 <TableCell className="text-right text-muted-foreground">{item.maxThreshold}</TableCell>
                                 <TableCell>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => startEditThreshold(item)}
-                                    className="h-7"
-                                  >
-                                    Sửa
-                                  </Button>
+                                  {canEdit && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => startEditThreshold(item)}
+                                      className="h-7"
+                                    >
+                                      Sửa
+                                    </Button>
+                                  )}
                                 </TableCell>
                               </>
                             )}

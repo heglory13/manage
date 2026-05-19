@@ -1,5 +1,9 @@
 import * as fc from 'fast-check';
-import { ActivityLogService, ActivityLogCreateData, ActivityLogQuery } from './activity-log.service.js';
+import {
+  ActivityLogService,
+  ActivityLogCreateData,
+  ActivityLogQuery,
+} from './activity-log.service.js';
 
 /**
  * Feature: system-upgrade-v3
@@ -8,14 +12,29 @@ import { ActivityLogService, ActivityLogCreateData, ActivityLogQuery } from './a
 
 // Pure function to determine action from HTTP method
 function getActionFromMethod(method: string): string | null {
-  const map: Record<string, string> = { POST: 'CREATE', PATCH: 'UPDATE', DELETE: 'DELETE' };
+  const map: Record<string, string> = {
+    POST: 'CREATE',
+    PATCH: 'UPDATE',
+    DELETE: 'DELETE',
+  };
   return map[method] ?? null;
 }
 
 // Pure filter function for activity logs
 function filterLogs(
-  logs: { userId: string; action: string; tableName: string; createdAt: Date }[],
-  query: { userId?: string; action?: string; tableName?: string; startDate?: Date; endDate?: Date },
+  logs: {
+    userId: string;
+    action: string;
+    tableName: string;
+    createdAt: Date;
+  }[],
+  query: {
+    userId?: string;
+    action?: string;
+    tableName?: string;
+    startDate?: Date;
+    endDate?: Date;
+  },
 ) {
   return logs.filter((log) => {
     if (query.userId && log.userId !== query.userId) return false;
@@ -109,7 +128,12 @@ describe('ActivityLog PBT', () => {
    */
   it('P9: activity log filtering returns only matching records', () => {
     const actionGen = fc.constantFrom('CREATE', 'UPDATE', 'DELETE');
-    const tableGen = fc.constantFrom('Product', 'User', 'InventoryTransaction', 'StorageZone');
+    const tableGen = fc.constantFrom(
+      'Product',
+      'User',
+      'InventoryTransaction',
+      'StorageZone',
+    );
 
     fc.assert(
       fc.property(
@@ -118,12 +142,17 @@ describe('ActivityLog PBT', () => {
             userId: fc.constantFrom('user-1', 'user-2', 'user-3'),
             action: actionGen,
             tableName: tableGen,
-            createdAt: fc.date({ min: new Date('2024-01-01'), max: new Date('2024-12-31') }),
+            createdAt: fc.date({
+              min: new Date('2024-01-01'),
+              max: new Date('2024-12-31'),
+            }),
           }),
           { minLength: 0, maxLength: 50 },
         ),
         fc.record({
-          userId: fc.option(fc.constantFrom('user-1', 'user-2', 'user-3'), { nil: undefined }),
+          userId: fc.option(fc.constantFrom('user-1', 'user-2', 'user-3'), {
+            nil: undefined,
+          }),
           action: fc.option(actionGen, { nil: undefined }),
           tableName: fc.option(tableGen, { nil: undefined }),
         }),
@@ -141,7 +170,8 @@ describe('ActivityLog PBT', () => {
           const expected = logs.filter((log) => {
             if (query.userId && log.userId !== query.userId) return false;
             if (query.action && log.action !== query.action) return false;
-            if (query.tableName && log.tableName !== query.tableName) return false;
+            if (query.tableName && log.tableName !== query.tableName)
+              return false;
             return true;
           });
           expect(result.length).toBe(expected.length);
@@ -156,18 +186,15 @@ describe('ActivityLog PBT', () => {
    */
   it('P10: only ADMIN role should access activity logs', () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom('ADMIN', 'MANAGER', 'STAFF'),
-        (role) => {
-          const isAllowed = role === 'ADMIN';
+      fc.property(fc.constantFrom('ADMIN', 'MANAGER', 'STAFF'), (role) => {
+        const isAllowed = role === 'ADMIN';
 
-          if (role === 'ADMIN') {
-            expect(isAllowed).toBe(true);
-          } else {
-            expect(isAllowed).toBe(false);
-          }
-        },
-      ),
+        if (role === 'ADMIN') {
+          expect(isAllowed).toBe(true);
+        } else {
+          expect(isAllowed).toBe(false);
+        }
+      }),
     );
   });
 });

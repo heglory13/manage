@@ -3,6 +3,7 @@ import { Role } from '@prisma/client/index';
 export const permissionModules = [
   'dashboard',
   'inventory',
+  'barcodePrint',
   'preliminaryChecks',
   'transactions',
   'audit',
@@ -42,6 +43,7 @@ export function createDefaultPermissions(role: Role): PermissionState {
   const base: PermissionState = {
     dashboard: createFlags({ view: true }),
     inventory: createFlags({ view: true }),
+    barcodePrint: createFlags({ view: true }),
     preliminaryChecks: createFlags({ view: true }),
     transactions: createFlags({ view: true }),
     audit: createFlags({ view: true }),
@@ -54,45 +56,183 @@ export function createDefaultPermissions(role: Role): PermissionState {
   };
 
   if (role === Role.ADMIN) {
-    base.inventory = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.preliminaryChecks = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.transactions = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.audit = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.warehouse = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.input = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
-    base.orderPlans = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
+    base.inventory = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
+    base.barcodePrint = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
+    base.preliminaryChecks = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
+    base.transactions = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
+    base.audit = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
+    base.warehouse = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
+    base.input = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
+    base.orderPlans = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
     base.activityLogs = createFlags({ view: true });
-    base.users = createFlags({ view: true, create: true, save: true, edit: true, delete: true });
+    base.users = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
     base.generalSettings = createFlags({ view: true, save: true, edit: true });
     return base;
   }
 
   if (role === Role.MANAGER) {
-    base.inventory = createFlags({ view: true, create: true, save: true, edit: true });
-    base.preliminaryChecks = createFlags({ view: true, create: true, save: true, edit: true });
-    base.transactions = createFlags({ view: true, create: true, save: true, edit: true });
-    base.audit = createFlags({ view: true, create: true, save: true, edit: true });
-    base.warehouse = createFlags({ view: true, create: true, save: true, edit: true });
-    base.input = createFlags({ view: true, create: true, save: true, edit: true });
-    base.orderPlans = createFlags({ view: true, create: true, save: true, edit: true });
+    base.inventory = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
+    base.barcodePrint = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
+    base.preliminaryChecks = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
+    base.transactions = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
+    base.audit = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
+    base.warehouse = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
+    base.input = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
+    base.orderPlans = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+    });
     base.activityLogs = createFlags({ view: true });
-    base.users = createFlags({ view: true, create: true, save: true, edit: true });
+    base.users = createFlags({
+      view: true,
+      create: true,
+      save: true,
+      edit: true,
+      delete: true,
+    });
     base.generalSettings = createFlags({ view: true, save: true, edit: true });
     return base;
   }
 
-  base.inventory = createFlags({ view: true });
-  base.preliminaryChecks = createFlags({ view: true, create: true, save: true });
+  // STAFF — chỉ view mặc định khi tạo mới, Admin/Quản lý có thể cấp thêm qua phân quyền
+  base.barcodePrint = createFlags({ view: true, create: true });
+  base.preliminaryChecks = createFlags({
+    view: true,
+    create: true,
+    save: true,
+  });
   base.transactions = createFlags({ view: true, create: true, save: true });
   base.audit = createFlags({ view: true, create: true, save: true });
-  base.warehouse = createFlags({ view: true });
-  base.input = createFlags({ view: true });
   base.orderPlans = createFlags({ view: true, create: true, save: true });
   return base;
 }
 
-export function normalizePermissions(value: unknown, role: Role): PermissionState {
+// Trần quyền (ceiling): quyền tối đa có thể cấp cho từng role.
+// Admin có thể cấp tất cả (kể cả delete) cho mọi role.
+// Manager không thể cấp delete — logic này được enforce ở frontend.
+function createCeilingPermissions(_role: Role): PermissionState {
+  // Với mọi role, ceiling = full quyền — Admin được tự do quyết định cấp gì
+  const full = createFlags({
+    view: true,
+    create: true,
+    save: true,
+    edit: true,
+    delete: true,
+  });
+  return {
+    dashboard: full,
+    inventory: full,
+    barcodePrint: full,
+    preliminaryChecks: full,
+    transactions: full,
+    audit: full,
+    warehouse: full,
+    input: full,
+    orderPlans: full,
+    activityLogs: full,
+    users: full,
+    generalSettings: full,
+  };
+}
+
+export function normalizePermissions(
+  value: unknown,
+  role: Role,
+): PermissionState {
   const defaults = createDefaultPermissions(role);
+  const ceiling = createCeilingPermissions(role);
+
   if (!value || typeof value !== 'object') {
     return defaults;
   }
@@ -107,7 +247,8 @@ export function normalizePermissions(value: unknown, role: Role): PermissionStat
     for (const action of permissionActions) {
       const raw = (moduleValue as Record<string, unknown>)[action];
       if (typeof raw === 'boolean') {
-        defaults[moduleKey][action] = defaults[moduleKey][action] ? raw : false;
+        // Chỉ cho phép true nếu ceiling của role cho phép action đó
+        defaults[moduleKey][action] = ceiling[moduleKey][action] ? raw : false;
       }
     }
   }

@@ -31,8 +31,9 @@ enum StocktakingStatus {
 }
 
 enum PreliminaryCheckStatus {
-  PENDING     // Chờ kiểm tra chi tiết
-  COMPLETED   // Đã kiểm tra chi tiết
+  PENDING     // Chờ duyệt
+  APPROVED    // Đã duyệt
+  REJECTED    // Từ chối
 }
 
 enum OrderPlanType {
@@ -68,7 +69,8 @@ model User {
   preliminaryChecks  PreliminaryCheck[]
   orderPlans         OrderPlan[]
   savedFilters       SavedFilter[]
-  barcodePrintLogs   BarcodePrintLog[]
+  barcodePrintLogs      BarcodePrintLog[]
+  customLabelTemplates  CustomLabelTemplate[]
 
   @@map("users")
 }
@@ -120,23 +122,29 @@ model InventoryTransaction {
   skuComboId           String?
   productConditionId   String?
   storageZoneId        String?
+  warehouseTypeId      String?
   actualStockDate      DateTime?       // Thời gian nhập kho thực tế
   warehousePositionId  String?         // Vị trí kho cụ thể
   preliminaryCheckId   String?         // Liên kết phiếu kiểm sơ bộ
   notes                String?
+  imageUrls            String?         @db.Text
   createdAt            DateTime        @default(now())
 
-  product            Product?           @relation(fields: [productId], references: [id])
-  category           Category?          @relation(fields: [categoryId], references: [id])
+  product            Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
+  category           Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   user               User               @relation(fields: [userId], references: [id])
-  skuCombo           SkuCombo?          @relation(fields: [skuComboId], references: [id])
-  productCondition   ProductCondition?  @relation(fields: [productConditionId], references: [id])
-  storageZone        StorageZone?       @relation(fields: [storageZoneId], references: [id])
-  warehousePosition  WarehousePosition? @relation(fields: [warehousePositionId], references: [id])
-  preliminaryCheck   PreliminaryCheck?  @relation(fields: [preliminaryCheckId], references: [id])
+  skuCombo           SkuCombo?          @relation(fields: [skuComboId], references: [id], onDelete: SetNull)
+  productCondition   ProductCondition?  @relation(fields: [productConditionId], references: [id], onDelete: SetNull)
+  storageZone        StorageZone?       @relation(fields: [storageZoneId], references: [id], onDelete: SetNull)
+  warehouseType      WarehouseType?     @relation(fields: [warehouseTypeId], references: [id], onDelete: SetNull)
+  warehousePosition  WarehousePosition? @relation(fields: [warehousePositionId], references: [id], onDelete: SetNull)
+  preliminaryCheck   PreliminaryCheck?  @relation(fields: [preliminaryCheckId], references: [id], onDelete: SetNull)
 
   @@index([productId, createdAt])
   @@index([categoryId, createdAt])
+  @@index([categoryId, status])
+  @@index([skuComboId, status])
+  @@index([storageZoneId, status])
   @@index([type, createdAt])
   @@index([status, createdAt])
   @@map("inventory_transactions")
@@ -190,7 +198,7 @@ model WarehouseConfig {
 
 model StocktakingRecord {
   id        String            @id @default(uuid())
-  status    StocktakingStatus @default(PENDING)
+  status    StocktakingStatus @default(CHECKING)
   createdBy String
   cutoffTime DateTime         @default(now()) // Thời gian cut-off
   submittedAt DateTime?                        // Thời gian submit
@@ -206,17 +214,19 @@ model StocktakingRecord {
 }
 
 model StocktakingItem {
-  id                String  @id @default(uuid())
+  id                String    @id @default(uuid())
   recordId          String
   productId         String?
   categoryId        String?
   itemCode          String
   itemLabel         String
-  systemQuantity    Int     // Số lượng trên hệ thống
-  actualQuantity    Int     // Số lượng thực tế
-  discrepancy       Int     // = actualQuantity - systemQuantity
-  evidenceUrl       String? // URL ảnh/file minh chứng
-  discrepancyReason String? // Nguyên nhân chênh lệch
+  systemQuantity    Int       // Số lượng trên hệ thống
+  actualQuantity    Int       // Số lượng thực tế
+  discrepancy       Int       // = actualQuantity - systemQuantity
+  evidenceUrl       String?   // URL ảnh/file minh chứng
+  discrepancyReason String?   // Nguyên nhân chênh lệch
+  isBalanced        Boolean   @default(false)
+  balancedAt        DateTime?
 
   record  StocktakingRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
   product Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -246,8 +256,10 @@ model WarehouseType {
   name      String   @unique
   createdAt DateTime @default(now())
 
-  preliminaryChecks PreliminaryCheck[]
-  orderPlans        OrderPlan[]
+  preliminaryChecks     PreliminaryCheck[]
+  orderPlans            OrderPlan[]
+  storageZones          StorageZone[]
+  inventoryTransactions InventoryTransaction[]
 
   @@map("warehouse_types")
 }
@@ -265,9 +277,9 @@ model PreliminaryCheck {
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
 
-  category              Category?               @relation(fields: [categoryId], references: [id])
-  classification        Classification?         @relation(fields: [classificationId], references: [id])
-  warehouseType         WarehouseType?          @relation(fields: [warehouseTypeId], references: [id])
+  category              Category?               @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  classification        Classification?         @relation(fields: [classificationId], references: [id], onDelete: SetNull)
+  warehouseType         WarehouseType?          @relation(fields: [warehouseTypeId], references: [id], onDelete: SetNull)
   creator               User                   @relation(fields: [createdBy], references: [id])
   inventoryTransactions InventoryTransaction[]
 
@@ -352,6 +364,9 @@ model SkuCombo {
   sizeId           String
   materialId       String
   compositeSku     String   @unique
+  minThreshold     Int      @default(0)
+  maxThreshold     Int      @default(0)
+  isDiscontinued   Boolean  @default(false)
   createdAt        DateTime @default(now())
 
   classification       Classification        @relation(fields: [classificationId], references: [id])
@@ -380,12 +395,14 @@ model ProductCondition {
 // === Khu vực hàng hoá ===
 
 model StorageZone {
-  id           String   @id @default(uuid())
-  name         String   @unique
-  maxCapacity  Int
-  currentStock Int      @default(0)
-  createdAt    DateTime @default(now())
+  id              String        @id @default(uuid())
+  name            String        @unique
+  maxCapacity     Int
+  currentStock    Int           @default(0)
+  warehouseTypeId String?
+  createdAt       DateTime      @default(now())
 
+  warehouseType         WarehouseType?         @relation(fields: [warehouseTypeId], references: [id], onDelete: SetNull)
   inventoryTransactions InventoryTransaction[]
 
   @@map("storage_zones")
@@ -403,6 +420,7 @@ model SavedFilter {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, pageKey, name])
   @@index([userId, pageKey])
   @@map("saved_filters")
 }
@@ -454,4 +472,39 @@ model BarcodePrintLog {
   @@index([status])
   @@index([createdAt])
   @@map("barcode_print_logs")
+}
+
+model CustomLabelTemplate {
+  id              String   @id @default(uuid())
+  name            String   // tên gợi nhớ của template
+  client          String?
+  product         String?
+  size            String?
+  material        String?
+  origin          String?
+  website         String?
+  slogan          String?
+  paperSize       String?
+  logoImageData   String?  @db.MediumText  // base64
+  extraImageData  String?  @db.MediumText  // base64
+  footerImageData String?  @db.MediumText  // base64
+  logoLine1           String?  // Brand name line 1, e.g., "HAVIAS"
+  logoLine2           String?  // Tagline line 2, e.g., "Factory" — optional
+  logoFontFamily      String?  // Font family for line 1
+  logoLine2FontFamily String?  // Font family for line 2 (can differ from line 1)
+  logoLine1Weight     Int?     // CSS font-weight: 400 | 700 | 900
+  logoLine2Weight     Int?     // CSS font-weight: 300 | 400 | 700
+  sloganWeight        Int?     // Slogan font-weight in footer: 400 | 700 | 900
+  websiteFontFamily   String?  // Font family for website in footer
+  websiteWeight       Int?     // CSS font-weight for website: 400 | 700 | 900
+  sloganFontFamily    String?  // Font family for slogan in footer
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([createdBy])
+  @@index([createdAt])
+  @@map("custom_label_templates")
 }

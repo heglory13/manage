@@ -10,6 +10,7 @@ export function formatDate(date: string | Date): string {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
   }).format(new Date(date));
 }
 
@@ -20,6 +21,7 @@ export function formatDateTime(date: string | Date): string {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
   }).format(new Date(date));
 }
 
@@ -49,6 +51,20 @@ export function getStatusLabel(status: string): string {
     INACTIVE: 'Không hoạt động',
   };
   return labels[status] || status;
+}
+
+/** Kiểm tra 1 giá trị có khớp bộ lọc multi-select không (hỗ trợ string hoặc string[]) */
+export function matchSel(filterVal: unknown, itemVal: unknown): boolean {
+  if (!filterVal || (Array.isArray(filterVal) && (filterVal as unknown[]).length === 0)) return true;
+  if (Array.isArray(filterVal)) return (filterVal as string[]).includes(String(itemVal ?? ''));
+  return String(itemVal ?? '') === String(filterVal);
+}
+
+/** Kiểm tra 1 mảng giá trị (vd: storageZoneNames) có khớp bộ lọc multi-select không */
+export function matchSelArr(filterVal: unknown, itemVals: string[]): boolean {
+  if (!filterVal || (Array.isArray(filterVal) && (filterVal as unknown[]).length === 0)) return true;
+  const arr = Array.isArray(filterVal) ? (filterVal as string[]) : [String(filterVal)];
+  return itemVals.some((v) => arr.includes(v));
 }
 
 export function debounce<T extends (...args: unknown[]) => unknown>(

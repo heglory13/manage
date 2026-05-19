@@ -1,79 +1,95 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { Role } from '@prisma/client/index';
-import { Roles } from '../auth/decorators/index.js';
+import { RequirePermission } from '../auth/decorators/index.js';
 import { DashboardService } from './dashboard.service.js';
-import { ChartQueryDto, TopCategoriesQueryDto, TopZonesQueryDto, DetailQueryDto, DetailTransactionsQueryDto } from './dto/index.js';
+import {
+  ChartQueryDto,
+  TopCategoriesQueryDto,
+  TopZonesQueryDto,
+  DetailQueryDto,
+  DetailTransactionsQueryDto,
+} from './dto/index.js';
 
 @Controller('dashboard')
+@RequirePermission('dashboard', 'view')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get('summary')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getSummary(@Query() query: ChartQueryDto) {
-    return this.dashboardService.getSummary(query.startDate, query.endDate);
+    return this.dashboardService.getSummary(
+      query.startDate,
+      query.endDate,
+      query.warehouseTypeId,
+    );
   }
 
   @Get('chart')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getChart(@Query() query: ChartQueryDto) {
-    return this.dashboardService.getChartData(query.period ?? 'month');
+    return this.dashboardService.getChartData(
+      query.period ?? 'month',
+      query.warehouseTypeId,
+    );
   }
 
   @Get('alerts/below-min')
-  @Roles(Role.MANAGER, Role.ADMIN)
-  async getAlertsBelowMin() {
-    return this.dashboardService.getAlertsBelowMin();
+  async getAlertsBelowMin(@Query() query: ChartQueryDto) {
+    return this.dashboardService.getAlertsBelowMin(query.warehouseTypeId);
   }
 
   @Get('alerts/above-max')
-  @Roles(Role.MANAGER, Role.ADMIN)
-  async getAlertsAboveMax() {
-    return this.dashboardService.getAlertsAboveMax();
+  async getAlertsAboveMax(@Query() query: ChartQueryDto) {
+    return this.dashboardService.getAlertsAboveMax(query.warehouseTypeId);
   }
 
   @Get('top-categories')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getTopCategories(@Query() query: TopCategoriesQueryDto) {
-    return this.dashboardService.getTopCategories(query.type ?? 'highest', query.limit ?? 20);
+    return this.dashboardService.getTopCategories(
+      query.type ?? 'highest',
+      query.limit ?? 20,
+      query.warehouseTypeId,
+    );
   }
 
   @Get('top-zones')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getTopZones(@Query() query: TopZonesQueryDto) {
-    return this.dashboardService.getTopZones(query.type ?? 'highest', query.limit ?? 10);
+    return this.dashboardService.getTopZones(
+      query.type ?? 'highest',
+      query.limit ?? 10,
+      query.warehouseTypeId,
+    );
   }
 
   @Get('chart-v2')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getChartV2(@Query() query: ChartQueryDto) {
-    return this.dashboardService.getChartDataV2(query.period ?? 'month');
+    return this.dashboardService.getChartDataV2(
+      query.period ?? 'month',
+      query.warehouseTypeId,
+    );
   }
 
   @Get('detail/categories')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getDetailCategories(@Query() query: DetailQueryDto) {
     return this.dashboardService.getDetailCategories(
       query.page ?? 1,
       query.limit ?? 20,
       query.startDate,
       query.endDate,
+      query.warehouseTypeId,
     );
   }
 
   @Get('detail/stock')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getDetailStock(@Query() query: DetailQueryDto) {
     return this.dashboardService.getDetailStock(
       query.page ?? 1,
       query.limit ?? 20,
       query.startDate,
       query.endDate,
+      query.warehouseTypeId,
     );
   }
 
   @Get('detail/transactions')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getDetailTransactions(@Query() query: DetailTransactionsQueryDto) {
     return this.dashboardService.getDetailTransactions(
       query.type ?? 'stock_in',
@@ -81,17 +97,18 @@ export class DashboardController {
       query.limit ?? 20,
       query.startDate,
       query.endDate,
+      query.warehouseTypeId,
     );
   }
 
   @Get('detail/order-plans')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async getDetailOrderPlans(@Query() query: DetailQueryDto) {
     return this.dashboardService.getDetailOrderPlans(
       query.page ?? 1,
       query.limit ?? 20,
       query.startDate,
       query.endDate,
+      query.warehouseTypeId,
     );
   }
 }

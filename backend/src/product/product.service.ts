@@ -3,10 +3,18 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Product } from '@prisma/client/index';
+import {
+  InventoryTransactionStatus,
+  Product,
+  TransactionType,
+} from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { SkuGeneratorService } from './sku-generator.service.js';
-import { CreateProductDto, UpdateProductDto, ProductQueryDto } from './dto/index.js';
+import {
+  CreateProductDto,
+  UpdateProductDto,
+  ProductQueryDto,
+} from './dto/index.js';
 
 export interface PaginatedResponse<T> {
   data: T[];
@@ -88,8 +96,43 @@ export class ProductService {
       this.prisma.product.count({ where }),
     ]);
 
+    const categoryIds = [
+      ...new Set(data.map((item) => item.categoryId).filter(Boolean)),
+    ];
+    const transactions = categoryIds.length
+      ? await this.prisma.inventoryTransaction.findMany({
+          where: {
+            status: InventoryTransactionStatus.ACTIVE,
+            categoryId: { in: categoryIds },
+          },
+          select: {
+            categoryId: true,
+            type: true,
+            quantity: true,
+          },
+        })
+      : [];
+
+    const stockByCategory = new Map<string, number>();
+    for (const transaction of transactions) {
+      if (!transaction.categoryId) continue;
+      const current = stockByCategory.get(transaction.categoryId) ?? 0;
+      stockByCategory.set(
+        transaction.categoryId,
+        current +
+          (transaction.type === TransactionType.STOCK_IN
+            ? transaction.quantity
+            : -transaction.quantity),
+      );
+    }
+
+    const hydratedData = data.map((product) => ({
+      ...product,
+      stock: stockByCategory.get(product.categoryId) ?? 0,
+    }));
+
     return {
-      data,
+      data: hydratedData,
       total,
       page,
       limit,
@@ -162,6 +205,38 @@ export class ProductService {
       data: { isDiscontinued: !product.isDiscontinued },
       include: { category: true },
     });
+  }
+
+  async updateDiscontinuedByCategoryIds(
+    categoryIds: string[],
+    isDiscontinued: boolean,
+  ) {
+    const normalizedCategoryIds = [
+      ...new Set(categoryIds.map((id) => id.trim()).filter(Boolean)),
+    ];
+    if (normalizedCategoryIds.length === 0) {
+      throw new BadRequestException('Danh sach danh muc khong hop le');
+    }
+
+    const products = await this.prisma.product.findMany({
+      where: { categoryId: { in: normalizedCategoryIds } },
+      select: { id: true, categoryId: true },
+    });
+
+    if (products.length === 0) {
+      throw new NotFoundException('Khong tim thay san pham nao de cap nhat');
+    }
+
+    await this.prisma.product.updateMany({
+      where: { categoryId: { in: normalizedCategoryIds } },
+      data: { isDiscontinued },
+    });
+
+    return {
+      updated: products.length,
+      categoryIds: [...new Set(products.map((item) => item.categoryId))],
+      isDiscontinued,
+    };
   }
 
   async updateMaxThreshold(id: string, maxThreshold: number): Promise<Product> {

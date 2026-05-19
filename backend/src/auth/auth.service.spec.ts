@@ -25,6 +25,7 @@ describe('AuthService', () => {
     password: '', // will be set in beforeEach
     name: 'Admin',
     role: 'ADMIN' as const,
+    permissions: {} as any,
     refreshToken: null as string | null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -157,9 +158,9 @@ describe('AuthService', () => {
     it('should throw UnauthorizedException when refresh token is invalid', async () => {
       jwtService.verifyAsync.mockRejectedValue(new Error('Invalid token'));
 
-      await expect(
-        authService.refreshTokens('invalid-token'),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(authService.refreshTokens('invalid-token')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('should throw UnauthorizedException when user has no stored refresh token', async () => {
@@ -173,9 +174,9 @@ describe('AuthService', () => {
         refreshToken: null,
       });
 
-      await expect(
-        authService.refreshTokens('some-token'),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(authService.refreshTokens('some-token')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 

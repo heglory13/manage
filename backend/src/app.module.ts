@@ -6,8 +6,11 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { AuthModule } from './auth/auth.module.js';
-import { JwtAuthGuard } from './auth/guards/index.js';
-import { RolesGuard } from './auth/guards/index.js';
+import {
+  JwtAuthGuard,
+  RolesGuard,
+  PermissionsGuard,
+} from './auth/guards/index.js';
 import { UserModule } from './user/user.module.js';
 import { ProductModule } from './product/product.module.js';
 import { InventoryModule } from './inventory/inventory.module.js';
@@ -64,6 +67,10 @@ import { BarcodePrintModule } from './barcode-print/barcode-print.module.js';
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionsGuard,
     },
     {
       provide: APP_GUARD,

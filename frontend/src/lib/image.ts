@@ -1,21 +1,21 @@
-export async function compressImageForUpload(file: File): Promise<File> {
-  if (!file.type.startsWith('image/')) {
-    return file;
-  }
+async function compressImage(
+  file: File,
+  maxPx: number,
+  targetBytes: number,
+  qualitySteps: number[],
+): Promise<File> {
+  if (!file.type.startsWith('image/')) return file;
 
-  const imageUrl = URL.createObjectURL(file);
-
+  const objectUrl = URL.createObjectURL(file);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
       img.onerror = reject;
-      img.src = imageUrl;
+      img.src = objectUrl;
     });
 
-    const maxWidth = 960;
-    const maxHeight = 960;
-    const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+    const scale = Math.min(maxPx / image.width, maxPx / image.height, 1);
     const width = Math.max(Math.round(image.width * scale), 1);
     const height = Math.max(Math.round(image.height * scale), 1);
 
@@ -23,43 +23,37 @@ export async function compressImageForUpload(file: File): Promise<File> {
     canvas.width = width;
     canvas.height = height;
 
-    const context = canvas.getContext('2d');
-    if (!context) {
-      return file;
-    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
 
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'medium';
-    context.drawImage(image, 0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, 0, 0, width, height);
 
-    const mimeType = 'image/jpeg';
-    const qualitySteps = [0.32, 0.24, 0.16, 0.1];
     let blob: Blob | null = null;
-
     for (const quality of qualitySteps) {
-      blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, mimeType, quality);
-      });
-
-      if (!blob) {
-        continue;
-      }
-
-      if (blob.size <= 120 * 1024) {
-        break;
-      }
+      blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+      if (blob && blob.size <= targetBytes) break;
     }
 
-    if (!blob) {
-      return file;
-    }
+    if (!blob) return file;
 
-    const compressedName = file.name.replace(/\.(png|jpg|jpeg|webp)$/i, '') + '.jpg';
-    return new File([blob], compressedName, {
-      type: 'image/jpeg',
-      lastModified: Date.now(),
-    });
+    const name = file.name.replace(/\.(png|jpg|jpeg|webp|gif)$/i, '') + '.jpg';
+    return new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() });
   } finally {
-    URL.revokeObjectURL(imageUrl);
+    URL.revokeObjectURL(objectUrl);
   }
+}
+
+/** Dùng cho avatar / thumbnail nhỏ — giới hạn 120 KB */
+export function compressImageForUpload(file: File): Promise<File> {
+  return compressImage(file, 960, 120 * 1024, [0.32, 0.24, 0.16, 0.1]);
+}
+
+/**
+ * Dùng cho ảnh chứng từ / phiếu nhập kho.
+ * Resize xuống tối đa 1200 px, giữ dung lượng dưới 300 KB.
+ */
+export function compressReceiptImage(file: File): Promise<File> {
+  return compressImage(file, 1200, 300 * 1024, [0.82, 0.70, 0.58, 0.46, 0.36]);
 }

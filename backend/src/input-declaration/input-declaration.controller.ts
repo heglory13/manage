@@ -1,6 +1,25 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+﻿import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  ForbiddenException,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
+import { CurrentUser } from '../auth/decorators/index.js';
+import { RolesGuard } from '../auth/guards/index.js';
+import { hasPermission } from '../auth/permissions.js';
+import type { UserPayload } from '../auth/interfaces/index.js';
 import { InputDeclarationService } from './input-declaration.service.js';
 import { SkuComboService } from './sku-combo.service.js';
 import {
@@ -12,26 +31,46 @@ import {
 } from './dto/index.js';
 
 @Controller('input-declarations')
+@UseGuards(RolesGuard)
 export class InputDeclarationController {
   constructor(
     private readonly inputDeclarationService: InputDeclarationService,
     private readonly skuComboService: SkuComboService,
   ) {}
 
+  private checkPermission(
+    user: UserPayload,
+    action: 'view' | 'create' | 'edit' | 'delete',
+  ): void {
+    if (!hasPermission(user.permissions, 'input', action)) {
+      throw new ForbiddenException(
+        `Ban khong co quyen thuc hien thao tac nay tren khai bao input`,
+      );
+    }
+  }
+
   // === Bulk fetch all declarations for spreadsheet view ===
   @Get('all')
-  getAllDeclarations() {
+  getAllDeclarations(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAllDeclarations();
   }
 
   @Get('import-template')
-  async downloadImportTemplate(@Res() res: Response): Promise<void> {
+  async downloadImportTemplate(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Res() res: Response,
+  ): Promise<void> {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     const buffer = await this.inputDeclarationService.generateImportTemplate();
 
     res.set({
       'Content-Type':
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': 'attachment; filename="input-declarations-template.xlsx"',
+      'Content-Disposition':
+        'attachment; filename="input-declarations-template.xlsx"',
       'Content-Length': buffer.length.toString(),
     });
 
@@ -40,203 +79,415 @@ export class InputDeclarationController {
 
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
-  importDeclarations(@UploadedFile() file: { buffer: Buffer }) {
+  importDeclarations(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @UploadedFile() file: { buffer: Buffer },
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     if (!file?.buffer) {
       throw new BadRequestException('File is required');
     }
-
-    return this.inputDeclarationService.importDeclarationsFromExcel(file.buffer);
+    return this.inputDeclarationService.importDeclarationsFromExcel(
+      file.buffer,
+    );
   }
 
-  // === Danh mục (Category) ===
+  // === Danh má»¥c (Category) ===
   @Get('categories')
-  getCategories() {
+  getCategories(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAllCategories();
   }
 
   @Post('categories')
-  createCategory(@Body() dto: CreateAttributeDto) {
+  createCategory(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.createCategory(dto.name);
   }
 
   @Patch('categories/:id')
-  updateCategory(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+  updateCategory(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
     return this.inputDeclarationService.updateCategory(id, dto.name);
   }
 
   @Delete('categories/:id')
-  deleteCategory(@Param('id') id: string) {
+  deleteCategory(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('category', id);
   }
 
-  // === Phân loại (Classification) ===
+  // === PhÃ¢n loáº¡i (Classification) ===
   @Get('classifications')
-  getClassifications() {
+  getClassifications(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAll('classification');
   }
 
   @Post('classifications')
-  createClassification(@Body() dto: CreateAttributeDto) {
+  createClassification(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.create('classification', dto.name);
   }
 
   @Patch('classifications/:id')
-  updateClassification(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
-    return this.inputDeclarationService.updateAttribute('classification', id, dto.name);
+  updateClassification(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
+    return this.inputDeclarationService.updateAttribute(
+      'classification',
+      id,
+      dto.name,
+    );
   }
 
   @Delete('classifications/:id')
-  deleteClassification(@Param('id') id: string) {
+  deleteClassification(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('classification', id);
   }
 
-  // === Màu sắc (Color) ===
+  // === MÃ u sáº¯c (Color) ===
   @Get('colors')
-  getColors() {
+  getColors(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAll('color');
   }
 
   @Post('colors')
-  createColor(@Body() dto: CreateAttributeDto) {
+  createColor(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.create('color', dto.name);
   }
 
   @Patch('colors/:id')
-  updateColor(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+  updateColor(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
     return this.inputDeclarationService.updateAttribute('color', id, dto.name);
   }
 
   @Delete('colors/:id')
-  deleteColor(@Param('id') id: string) {
+  deleteColor(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('color', id);
   }
 
   // === Size ===
   @Get('sizes')
-  getSizes() {
+  getSizes(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAll('size');
   }
 
   @Post('sizes')
-  createSize(@Body() dto: CreateAttributeDto) {
+  createSize(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.create('size', dto.name);
   }
 
   @Patch('sizes/:id')
-  updateSize(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+  updateSize(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
     return this.inputDeclarationService.updateAttribute('size', id, dto.name);
   }
 
   @Delete('sizes/:id')
-  deleteSize(@Param('id') id: string) {
+  deleteSize(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('size', id);
   }
 
-  // === Chất liệu (Material) ===
+  // === Cháº¥t liá»‡u (Material) ===
   @Get('materials')
-  getMaterials() {
+  getMaterials(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAll('material');
   }
 
   @Post('materials')
-  createMaterial(@Body() dto: CreateAttributeDto) {
+  createMaterial(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.create('material', dto.name);
   }
 
   @Patch('materials/:id')
-  updateMaterial(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
-    return this.inputDeclarationService.updateAttribute('material', id, dto.name);
+  updateMaterial(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
+    return this.inputDeclarationService.updateAttribute(
+      'material',
+      id,
+      dto.name,
+    );
   }
 
   @Delete('materials/:id')
-  deleteMaterial(@Param('id') id: string) {
+  deleteMaterial(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('material', id);
   }
 
-  // === Tình trạng hàng hoá (ProductCondition) ===
+  // === TÃ¬nh tráº¡ng hÃ ng hoÃ¡ (ProductCondition) ===
   @Get('product-conditions')
-  getProductConditions() {
+  getProductConditions(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAllProductConditions();
   }
 
   @Post('product-conditions')
-  createProductCondition(@Body() dto: CreateAttributeDto) {
+  createProductCondition(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.createProductCondition(dto.name);
   }
 
   @Patch('product-conditions/:id')
-  updateProductCondition(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+  updateProductCondition(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
     return this.inputDeclarationService.updateProductCondition(id, dto.name);
   }
 
   @Delete('product-conditions/:id')
-  deleteProductCondition(@Param('id') id: string) {
+  deleteProductCondition(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('productCondition', id);
   }
 
-  // === Loại kho (WarehouseType) ===
+  // === Loáº¡i kho (WarehouseType) ===
   @Get('warehouse-types')
-  getWarehouseTypes() {
+  getWarehouseTypes(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAllWarehouseTypes();
   }
 
   @Post('warehouse-types')
-  createWarehouseType(@Body() dto: CreateAttributeDto) {
+  createWarehouseType(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.createWarehouseType(dto.name);
   }
 
   @Patch('warehouse-types/:id')
-  updateWarehouseType(@Param('id') id: string, @Body() dto: CreateAttributeDto) {
+  updateWarehouseType(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
     return this.inputDeclarationService.updateWarehouseType(id, dto.name);
   }
 
   @Delete('warehouse-types/:id')
-  deleteWarehouseType(@Param('id') id: string) {
+  deleteWarehouseType(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('warehouseType', id);
   }
 
-  // === Khu vực hàng hoá (StorageZone) ===
+  // === Khu vá»±c hÃ ng hoÃ¡ (StorageZone) ===
   @Get('storage-zones')
-  getStorageZones() {
+  getStorageZones(@CurrentUser() currentUser: Record<string, unknown>) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.inputDeclarationService.getAllStorageZones();
   }
 
   @Post('storage-zones')
-  createStorageZone(@Body() dto: CreateStorageZoneDto) {
+  createStorageZone(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateStorageZoneDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.inputDeclarationService.createStorageZone(
       dto.name,
       dto.maxCapacity,
+      dto.warehouseTypeId,
     );
   }
 
   @Patch('storage-zones/:id')
-  updateStorageZone(@Param('id') id: string, @Body() dto: UpdateStorageZoneDto) {
-    return this.inputDeclarationService.updateStorageZone(id, dto.name, dto.maxCapacity);
+  updateStorageZone(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: UpdateStorageZoneDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
+    return this.inputDeclarationService.updateStorageZone(
+      id,
+      dto.name,
+      dto.maxCapacity,
+      dto.warehouseTypeId,
+    );
   }
 
   @Delete('storage-zones/:id')
-  deleteStorageZone(@Param('id') id: string) {
+  deleteStorageZone(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.inputDeclarationService.deleteAttribute('storageZone', id);
   }
 
-  // === SKU tổng hợp (SkuCombo) ===
+  // === SKU tá»•ng há»£p (SkuCombo) ===
   @Get('sku-combos')
-  getSkuCombos(@Query() query: SkuComboQueryDto) {
+  getSkuCombos(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Query() query: SkuComboQueryDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'view');
     return this.skuComboService.getAll(query);
   }
 
   @Post('sku-combos')
-  createSkuCombo(@Body() dto: CreateSkuComboDto) {
+  createSkuCombo(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateSkuComboDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.skuComboService.create(dto);
   }
 
   @Post('sku-combos/find-or-create')
-  findOrCreateSkuCombo(@Body() dto: CreateSkuComboDto) {
+  findOrCreateSkuCombo(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: CreateSkuComboDto,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'create');
     return this.skuComboService.findOrCreate(dto);
   }
 
   @Delete('sku-combos/:id')
-  deleteSkuCombo(@Param('id') id: string) {
+  deleteSkuCombo(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'delete');
     return this.skuComboService.delete(id);
+  }
+
+  @Patch('sku-combos/:id/threshold')
+  updateSkuComboThreshold(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() dto: { minThreshold: number; maxThreshold: number },
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
+    return this.skuComboService.updateThreshold(
+      id,
+      dto.minThreshold,
+      dto.maxThreshold,
+    );
+  }
+
+  @Patch('sku-combos/batch-discontinue')
+  batchUpdateSkuComboDiscontinued(
+    @CurrentUser() currentUser: Record<string, unknown>,
+    @Body() dto: { ids: string[]; isDiscontinued: boolean },
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    this.checkPermission(user, 'edit');
+    return this.skuComboService.batchUpdateDiscontinued(
+      dto.ids,
+      dto.isDiscontinued,
+    );
   }
 }

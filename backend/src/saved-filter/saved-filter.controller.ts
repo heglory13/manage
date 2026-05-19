@@ -1,4 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/index.js';
 import type { UserPayload } from '../auth/interfaces/index.js';
 import { SavedFilterService } from './saved-filter.service.js';
@@ -25,10 +33,7 @@ export class SavedFilterController {
   }
 
   @Delete(':id')
-  async delete(
-    @Param('id') id: string,
-    @CurrentUser() user: UserPayload,
-  ) {
+  async delete(@Param('id') id: string, @CurrentUser() user: UserPayload) {
     await this.savedFilterService.delete(id, user.userId);
     return { message: 'Đã xóa bộ lọc' };
   }

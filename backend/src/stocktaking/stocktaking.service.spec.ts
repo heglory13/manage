@@ -19,105 +19,137 @@ function createMockPrisma(
 
   const mockPrisma = {
     category: {
-      findMany: jest.fn().mockImplementation((args?: { where?: { id?: { in: string[] } } }) => {
-        const ids = args?.where?.id?.in;
-        const categoryIds =
-          ids ??
-          Array.from(productsMap.keys()).map((id) => `cat-${id}`);
+      findMany: jest
+        .fn()
+        .mockImplementation((args?: { where?: { id?: { in: string[] } } }) => {
+          const ids = args?.where?.id?.in;
+          const categoryIds =
+            ids ?? Array.from(productsMap.keys()).map((id) => `cat-${id}`);
 
-        return Promise.resolve(
-          categoryIds.map((categoryId) => ({
-            id: categoryId,
-            code: categoryId.toUpperCase(),
-            name: `Category ${categoryId}`,
-          })),
-        );
-      }),
-    },
-    product: {
-      findMany: jest.fn().mockImplementation((args?: { where?: Record<string, unknown> }) => {
-        if (!args?.where || Object.keys(args.where).length === 0) {
-          // mode='full' — return all products
           return Promise.resolve(
-            Array.from(productsMap.values()).map((p) => ({
-              id: p.id,
-              name: `Product ${p.id}`,
-              sku: `SKU-${p.id}`,
-              price: 100,
-              categoryId: `cat-${p.id}`,
-              stock: stockState.get(p.id) ?? p.stock,
-              createdAt: new Date(),
-              updatedAt: new Date(),
+            categoryIds.map((categoryId) => ({
+              id: categoryId,
+              code: categoryId.toUpperCase(),
+              name: `Category ${categoryId}`,
             })),
           );
-        }
-        const ids = (args.where.id as { in: string[] })?.in;
-        if (!ids) return Promise.resolve([]);
-        return Promise.resolve(
-          ids
-            .map((id: string) => {
-              const product = productsMap.get(id);
-              if (!product) return null;
-              return {
-                id: product.id,
-                name: `Product ${product.id}`,
-                sku: `SKU-${product.id}`,
+        }),
+    },
+    product: {
+      findMany: jest
+        .fn()
+        .mockImplementation((args?: { where?: Record<string, unknown> }) => {
+          if (!args?.where || Object.keys(args.where).length === 0) {
+            // mode='full' — return all products
+            return Promise.resolve(
+              Array.from(productsMap.values()).map((p) => ({
+                id: p.id,
+                name: `Product ${p.id}`,
+                sku: `SKU-${p.id}`,
                 price: 100,
-                categoryId: `cat-${product.id}`,
-                stock: stockState.get(id) ?? product.stock,
+                categoryId: `cat-${p.id}`,
+                stock: stockState.get(p.id) ?? p.stock,
                 createdAt: new Date(),
                 updatedAt: new Date(),
-              };
-            })
-            .filter(Boolean),
-        );
-      }),
-      update: jest.fn().mockImplementation(({ where, data }: { where: { id: string }; data: { stock: number } }) => {
-        stockState.set(where.id, data.stock);
-        return Promise.resolve({ id: where.id, stock: data.stock });
-      }),
+              })),
+            );
+          }
+          const ids = (args.where.id as { in: string[] })?.in;
+          if (!ids) return Promise.resolve([]);
+          return Promise.resolve(
+            ids
+              .map((id: string) => {
+                const product = productsMap.get(id);
+                if (!product) return null;
+                return {
+                  id: product.id,
+                  name: `Product ${product.id}`,
+                  sku: `SKU-${product.id}`,
+                  price: 100,
+                  categoryId: `cat-${product.id}`,
+                  stock: stockState.get(id) ?? product.stock,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                };
+              })
+              .filter(Boolean),
+          );
+        }),
+      update: jest
+        .fn()
+        .mockImplementation(
+          ({
+            where,
+            data,
+          }: {
+            where: { id: string };
+            data: { stock: number };
+          }) => {
+            stockState.set(where.id, data.stock);
+            return Promise.resolve({ id: where.id, stock: data.stock });
+          },
+        ),
     },
     stocktakingRecord: {
-      create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
-        const recordId = `record-${++recordIdCounter}`;
-        const itemsCreate = (data.items as { create: Array<Record<string, unknown>> }).create;
-        const items = itemsCreate.map(
-          (item: Record<string, unknown>, index: number) => ({
-            id: `item-${recordId}-${index}`,
-            recordId,
-            ...item,
-            product: null,
-            category: item.categoryId
-              ? {
-                  id: item.categoryId,
-                  code: item.itemCode,
-                  name: item.itemLabel,
-                }
-              : null,
-          }),
-        );
-        return Promise.resolve({
-          id: recordId,
-          status: data.status,
-          mode: data.mode,
-          cutoffTime: data.cutoffTime,
-          submittedAt: data.submittedAt || null,
-          createdBy: data.createdBy,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          items,
-          creator: { id: data.createdBy, name: 'Test User', email: 'test@test.com', role: 'STAFF' },
-        });
-      }),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+          const recordId = `record-${++recordIdCounter}`;
+          const itemsCreate = (
+            data.items as { create: Array<Record<string, unknown>> }
+          ).create;
+          const items = itemsCreate.map(
+            (item: Record<string, unknown>, index: number) => ({
+              id: `item-${recordId}-${index}`,
+              recordId,
+              ...item,
+              product: null,
+              category: item.categoryId
+                ? {
+                    id: item.categoryId,
+                    code: item.itemCode,
+                    name: item.itemLabel,
+                  }
+                : null,
+            }),
+          );
+          return Promise.resolve({
+            id: recordId,
+            status: data.status,
+            mode: data.mode,
+            cutoffTime: data.cutoffTime,
+            submittedAt: data.submittedAt || null,
+            createdBy: data.createdBy,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            items,
+            creator: {
+              id: data.createdBy,
+              name: 'Test User',
+              email: 'test@test.com',
+              role: 'STAFF',
+            },
+          });
+        }),
       findUnique: jest.fn(),
       update: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
     },
     stocktakingItem: {
-      update: jest.fn().mockImplementation(({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-        return Promise.resolve({ id: where.id, ...data });
-      }),
+      update: jest
+        .fn()
+        .mockImplementation(
+          ({
+            where,
+            data,
+          }: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => {
+            return Promise.resolve({ id: where.id, ...data });
+          },
+        ),
     },
     stocktakingStatusHistory: {
       create: jest.fn().mockResolvedValue({ id: 'history-1' }),
@@ -125,14 +157,46 @@ function createMockPrisma(
     },
     inventoryTransaction: {
       findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest
+        .fn()
+        .mockImplementation(
+          (args?: { where?: { categoryId?: { in?: string[] } } }) => {
+            const catIds = args?.where?.categoryId?.in;
+            const source = catIds
+              ? Array.from(productsMap.entries()).filter(([id]) =>
+                  catIds.includes(`cat-${id}`),
+                )
+              : Array.from(productsMap.entries());
+            return Promise.resolve(
+              source.flatMap(([id, p]) =>
+                p.stock > 0
+                  ? [
+                      {
+                        categoryId: `cat-${id}`,
+                        type: 'STOCK_IN',
+                        quantity: p.stock,
+                        skuComboId: null,
+                        status: 'ACTIVE',
+                      },
+                    ]
+                  : [],
+              ),
+            );
+          },
+        ),
       create: jest.fn().mockResolvedValue({ id: 'txn-1' }),
+    },
+    skuCombo: {
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     preliminaryCheck: {
       findMany: jest.fn().mockResolvedValue([]),
     },
-    $transaction: jest.fn().mockImplementation((operations: Promise<unknown>[]) => {
-      return Promise.all(operations);
-    }),
+    $transaction: jest
+      .fn()
+      .mockImplementation((operations: Promise<unknown>[]) => {
+        return Promise.all(operations);
+      }),
     getStockState: () => stockState,
   };
 
@@ -143,10 +207,13 @@ function createMockInventoryService(
   productsMap: Map<string, { id: string; stock: number }> = new Map(),
 ) {
   return {
-    getCurrentStockByCategory: jest.fn().mockImplementation((categoryId: string) => {
-      const productId = categoryId.replace(/^cat-/, '');
-      return Promise.resolve(productsMap.get(productId)?.stock ?? 0);
-    }),
+    getCurrentStockByCategory: jest
+      .fn()
+      .mockImplementation((categoryId: string) => {
+        const productId = categoryId.replace(/^cat-/, '');
+        return Promise.resolve(productsMap.get(productId)?.stock ?? 0);
+      }),
+    balanceStockByCategory: jest.fn().mockResolvedValue({}),
   };
 }
 
@@ -206,8 +273,12 @@ describe('StocktakingService V2', () => {
         createMockInventoryService() as any,
       );
 
-      await expect(service.create('selected', 'user-1', [])).rejects.toThrow(BadRequestException);
-      await expect(service.create('selected', 'user-1')).rejects.toThrow(BadRequestException);
+      await expect(service.create('selected', 'user-1', [])).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.create('selected', 'user-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
@@ -221,7 +292,15 @@ describe('StocktakingService V2', () => {
         id: 'record-1',
         status: 'CHECKING',
         items: [
-          { id: 'item-1', productId: 'p1', systemQuantity: 10, actualQuantity: 0, discrepancy: 0, evidenceUrl: null, discrepancyReason: null },
+          {
+            id: 'item-1',
+            productId: 'p1',
+            systemQuantity: 10,
+            actualQuantity: 0,
+            discrepancy: 0,
+            evidenceUrl: null,
+            discrepancyReason: null,
+          },
         ],
       });
 
@@ -232,9 +311,7 @@ describe('StocktakingService V2', () => {
 
       // Submit with discrepancy but no reason
       await expect(
-        service.submit('record-1', [
-          { itemId: 'item-1', actualQuantity: 8 },
-        ]),
+        service.submit('record-1', [{ itemId: 'item-1', actualQuantity: 8 }]),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -243,18 +320,28 @@ describe('StocktakingService V2', () => {
       const mockPrisma = createMockPrisma(productsMap);
       const mockInventoryService = createMockInventoryService(productsMap);
 
-      mockPrisma.stocktakingRecord.findUnique.mockImplementation(({ where }: { where: { id: string } }) => {
-        if (where.id === 'record-1') {
-          return Promise.resolve({
-            id: 'record-1',
-            status: 'CHECKING',
-            items: [
-              { id: 'item-1', productId: 'p1', systemQuantity: 10, actualQuantity: 0, discrepancy: 0, evidenceUrl: null, discrepancyReason: null },
-            ],
-          });
-        }
-        return Promise.resolve(null);
-      });
+      mockPrisma.stocktakingRecord.findUnique.mockImplementation(
+        ({ where }: { where: { id: string } }) => {
+          if (where.id === 'record-1') {
+            return Promise.resolve({
+              id: 'record-1',
+              status: 'CHECKING',
+              items: [
+                {
+                  id: 'item-1',
+                  productId: 'p1',
+                  systemQuantity: 10,
+                  actualQuantity: 0,
+                  discrepancy: 0,
+                  evidenceUrl: null,
+                  discrepancyReason: null,
+                },
+              ],
+            });
+          }
+          return Promise.resolve(null);
+        },
+      );
 
       // For the final findUnique after submit
       mockPrisma.stocktakingRecord.update.mockResolvedValue({
@@ -268,7 +355,11 @@ describe('StocktakingService V2', () => {
       );
 
       const result = await service.submit('record-1', [
-        { itemId: 'item-1', actualQuantity: 8, discrepancyReason: 'Hàng bị hỏng' },
+        {
+          itemId: 'item-1',
+          actualQuantity: 8,
+          discrepancyReason: 'Hàng bị hỏng',
+        },
       ]);
 
       // Should have called $transaction
@@ -289,9 +380,9 @@ describe('StocktakingService V2', () => {
         mockInventoryService as any,
       );
 
-      await expect(
-        service.submit('record-1', []),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.submit('record-1', [])).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
@@ -310,7 +401,9 @@ describe('StocktakingService V2', () => {
         mockInventoryService as any,
       );
 
-      await expect(service.approve('record-1')).rejects.toThrow(BadRequestException);
+      await expect(service.approve('record-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should only reject from PENDING status', async () => {
@@ -326,7 +419,9 @@ describe('StocktakingService V2', () => {
         mockInventoryService as any,
       );
 
-      await expect(service.reject('record-1')).rejects.toThrow(BadRequestException);
+      await expect(service.reject('record-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should record status history on approve', async () => {
@@ -338,13 +433,28 @@ describe('StocktakingService V2', () => {
         id: 'record-1',
         status: 'PENDING',
         createdBy: 'user-1',
-        items: [{ id: 'item-1', categoryId: 'cat-p1', itemCode: 'CAT-P1', itemLabel: 'Category cat-p1', systemQuantity: 10, actualQuantity: 8, discrepancy: -2 }],
+        items: [
+          {
+            id: 'item-1',
+            categoryId: 'cat-p1',
+            itemCode: 'CAT-P1',
+            itemLabel: 'Category cat-p1',
+            systemQuantity: 10,
+            actualQuantity: 8,
+            discrepancy: -2,
+          },
+        ],
       });
       mockPrisma.stocktakingRecord.update.mockResolvedValue({
         id: 'record-1',
         status: 'APPROVED',
         items: [],
-        creator: { id: 'user-1', name: 'Test', email: 'test@test.com', role: 'MANAGER' },
+        creator: {
+          id: 'user-1',
+          name: 'Test',
+          email: 'test@test.com',
+          role: 'MANAGER',
+        },
       });
 
       const service = new StocktakingService(
@@ -355,7 +465,10 @@ describe('StocktakingService V2', () => {
 
       expect(mockPrisma.stocktakingStatusHistory.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ status: 'APPROVED', changedBy: 'user-1' }),
+          data: expect.objectContaining({
+            status: 'APPROVED',
+            changedBy: 'user-1',
+          }),
         }),
       );
     });
@@ -372,7 +485,9 @@ describe('StocktakingService V2', () => {
         mockInventoryService as any,
       );
 
-      await expect(service.getStatusHistory('non-existent')).rejects.toThrow(NotFoundException);
+      await expect(service.getStatusHistory('non-existent')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -406,15 +521,12 @@ describe('StocktakingService V2', () => {
       const service = new StocktakingService({} as PrismaService, {} as any);
 
       fc.assert(
-        fc.property(
-          fc.integer({ min: 1, max: 100000 }),
-          (discrepancy) => {
-            const result = service.validateDiscrepancyReasons([
-              { discrepancy, discrepancyReason: null },
-            ]);
-            expect(result.valid).toBe(false);
-          },
-        ),
+        fc.property(fc.integer({ min: 1, max: 100000 }), (discrepancy) => {
+          const result = service.validateDiscrepancyReasons([
+            { discrepancy, discrepancyReason: null },
+          ]);
+          expect(result.valid).toBe(false);
+        }),
       );
     });
 

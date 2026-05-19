@@ -18,7 +18,7 @@ module.exports = {
     },
     extend: {
       fontFamily: {
-        sans: ['Arial', 'Segoe UI', 'Tahoma', 'Geneva', 'Verdana', 'sans-serif'],
+        sans: ['Noto Sans Vietnamese', 'Arial', 'Segoe UI', 'Tahoma', 'Geneva', 'Verdana', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",

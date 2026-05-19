@@ -18,7 +18,8 @@ const vietnameseChars =
 const vietnameseUpperChars =
   'ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ';
 const asciiLetters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-const allVietnameseChars = vietnameseChars + vietnameseUpperChars + asciiLetters;
+const allVietnameseChars =
+  vietnameseChars + vietnameseUpperChars + asciiLetters;
 
 const vietnameseStringArb = fc.stringOf(
   fc.constantFrom(...[...allVietnameseChars]),
@@ -75,7 +76,9 @@ describe('Feature: inventory-management-system', () => {
       })
       .filter((s) => s.length >= 2);
 
-    const idArb = fc.integer({ min: 1, max: 999 }).map((n) => String(n).padStart(3, '0'));
+    const idArb = fc
+      .integer({ min: 1, max: 999 })
+      .map((n) => String(n).padStart(3, '0'));
 
     const dateArb = fc
       .record({

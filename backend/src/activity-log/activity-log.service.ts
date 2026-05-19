@@ -42,13 +42,15 @@ export class ActivityLogService {
         action: logData.action,
         tableName: logData.tableName,
         recordId: logData.recordId,
-        oldData: logData.oldData as object ?? undefined,
-        newData: logData.newData as object ?? undefined,
+        oldData: (logData.oldData as object) ?? undefined,
+        newData: (logData.newData as object) ?? undefined,
       },
     });
   }
 
-  async findAll(query: ActivityLogQuery): Promise<PaginatedResponse<ActivityLog>> {
+  async findAll(
+    query: ActivityLogQuery,
+  ): Promise<PaginatedResponse<ActivityLog>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;

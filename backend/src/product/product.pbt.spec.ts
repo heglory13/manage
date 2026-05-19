@@ -38,7 +38,9 @@ describe('Product PBT', () => {
               {} as SkuGeneratorService,
             );
 
-            await expect(service.updateThreshold('p-1', negativeThreshold)).rejects.toThrow(BadRequestException);
+            await expect(
+              service.updateThreshold('p-1', negativeThreshold),
+            ).rejects.toThrow(BadRequestException);
             expect(mockPrisma.product.update).not.toHaveBeenCalled();
           },
         ),
@@ -58,7 +60,11 @@ describe('Product PBT', () => {
                   minThreshold: 0,
                 }),
                 update: jest.fn().mockImplementation(({ data }: any) =>
-                  Promise.resolve({ id: 'p-1', minThreshold: data.minThreshold, category: { name: 'Cat' } }),
+                  Promise.resolve({
+                    id: 'p-1',
+                    minThreshold: data.minThreshold,
+                    category: { name: 'Cat' },
+                  }),
                 ),
               },
             };

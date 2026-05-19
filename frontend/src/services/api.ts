@@ -194,5 +194,5 @@ export interface InputDeclaration {
   materials?: { id: number; name: string }[];
   productConditions?: { id: number; name: string }[];
   warehouseTypes?: { id: number; name: string }[];
-  storageZones?: { id: number; name: string; warehouseTypeId: number }[];
+  storageZones?: { id: string; name: string; warehouseTypeId?: string | number; maxCapacity: number; currentStock: number }[];
 }

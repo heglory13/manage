@@ -29,18 +29,18 @@ const roleLabels: Record<string, string> = {
 };
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard, roles: [] as string[] },
-  { name: 'Quan ly ton kho', href: '/inventory', icon: Boxes, roles: [] as string[] },
-  { name: 'Nhap kiem so bo', href: '/preliminary-checks', icon: PackagePlus, roles: [] as string[] },
-  { name: 'Ke hoach dat hang', href: '/order-plans', icon: FileText, roles: [] as string[] },
-  { name: 'Nhap / Xuat kho', href: '/transactions', icon: ClipboardList, roles: [] as string[] },
-  { name: 'Kiem ke dinh ky', href: '/stocktaking', icon: ClipboardCheck, roles: [] as string[] },
-  { name: 'So do kho hang', href: '/warehouse', icon: Warehouse, roles: [] as string[] },
-  { name: 'In tem ma vach', href: '/barcode-management', icon: Printer, roles: [] as string[] },
-  { name: 'Khai bao Input', href: '/input-declarations', icon: ShieldCheck, roles: [] as string[] },
-  { name: 'Cau hinh thong tin chung', href: '/general-settings', icon: Settings2, roles: ['ADMIN', 'MANAGER'] },
-  { name: 'Quan ly nhan vien', href: '/users', icon: Users, roles: ['ADMIN', 'MANAGER'] },
-  { name: 'Nhat ky hoat dong', href: '/activity-logs', icon: Bell, roles: ['ADMIN', 'MANAGER'] },
+  { name: 'Dashboard', href: '/', icon: LayoutDashboard, roles: [] as string[], permissionKey: 'dashboard' },
+  { name: 'Quan ly ton kho', href: '/inventory', icon: Boxes, roles: [] as string[], permissionKey: 'inventory' },
+  { name: 'Nhap kiem so bo', href: '/preliminary-checks', icon: PackagePlus, roles: [] as string[], permissionKey: 'preliminaryChecks' },
+  { name: 'Ke hoach dat hang', href: '/order-plans', icon: FileText, roles: [] as string[], permissionKey: 'orderPlans' },
+  { name: 'Nhap / Xuat kho', href: '/transactions', icon: ClipboardList, roles: [] as string[], permissionKey: 'transactions' },
+  { name: 'Kiem ke dinh ky', href: '/stocktaking', icon: ClipboardCheck, roles: [] as string[], permissionKey: 'audit' },
+  { name: 'So do kho hang', href: '/warehouse', icon: Warehouse, roles: [] as string[], permissionKey: 'warehouse' },
+  { name: 'In tem ma vach', href: '/barcode-management', icon: Printer, roles: [] as string[], permissionKey: 'input' },
+  { name: 'Khai bao Input', href: '/input-declarations', icon: ShieldCheck, roles: [] as string[], permissionKey: 'input' },
+  { name: 'Cau hinh thong tin chung', href: '/general-settings', icon: Settings2, roles: ['ADMIN', 'MANAGER'], permissionKey: 'generalSettings' },
+  { name: 'Quan ly nhan vien', href: '/users', icon: Users, roles: ['ADMIN', 'MANAGER'], permissionKey: 'users' },
+  { name: 'Nhat ky hoat dong', href: '/activity-logs', icon: Bell, roles: ['ADMIN', 'MANAGER'], permissionKey: 'activityLogs' },
 ];
 
 function getPageMeta(pathname: string) {
@@ -65,8 +65,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const filteredNav = useMemo(
     () =>
       navigation.filter((item) => {
-        if (item.roles.length === 0) return true;
-        return user ? item.roles.includes(user.role) : false;
+        if (!user) return false;
+        // Role-based check
+        if (item.roles.length > 0 && !item.roles.includes(user.role)) return false;
+        // Permission-based check: if user has permissions object, check view permission
+        if (user.permissions && item.permissionKey) {
+          const modulePerms = user.permissions[item.permissionKey];
+          if (modulePerms && modulePerms.view === false) return false;
+        }
+        return true;
       }),
     [user],
   );
@@ -176,15 +183,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="ims-topbar-actions">
-            <label className="ims-search">
-              <Search size={14} />
-              <input placeholder="Tim nhanh..." />
-            </label>
-
-            <button className="ims-icon-btn">
-              <Bell size={16} />
-            </button>
-
             <div className="ims-topbar-user">
               <div className="ims-topbar-user-text">
                 <strong>{user?.name ?? 'Admin User'}</strong>

@@ -13,23 +13,77 @@ export interface SkuComponents {
  */
 const DIACRITICS_MAP: Record<string, string> = {
   // a variants
-  à: 'a', á: 'a', ả: 'a', ã: 'a', ạ: 'a',
-  ă: 'a', ằ: 'a', ắ: 'a', ẳ: 'a', ẵ: 'a', ặ: 'a',
-  â: 'a', ầ: 'a', ấ: 'a', ẩ: 'a', ẫ: 'a', ậ: 'a',
+  à: 'a',
+  á: 'a',
+  ả: 'a',
+  ã: 'a',
+  ạ: 'a',
+  ă: 'a',
+  ằ: 'a',
+  ắ: 'a',
+  ẳ: 'a',
+  ẵ: 'a',
+  ặ: 'a',
+  â: 'a',
+  ầ: 'a',
+  ấ: 'a',
+  ẩ: 'a',
+  ẫ: 'a',
+  ậ: 'a',
   // e variants
-  è: 'e', é: 'e', ẻ: 'e', ẽ: 'e', ẹ: 'e',
-  ê: 'e', ề: 'e', ế: 'e', ể: 'e', ễ: 'e', ệ: 'e',
+  è: 'e',
+  é: 'e',
+  ẻ: 'e',
+  ẽ: 'e',
+  ẹ: 'e',
+  ê: 'e',
+  ề: 'e',
+  ế: 'e',
+  ể: 'e',
+  ễ: 'e',
+  ệ: 'e',
   // i variants
-  ì: 'i', í: 'i', ỉ: 'i', ĩ: 'i', ị: 'i',
+  ì: 'i',
+  í: 'i',
+  ỉ: 'i',
+  ĩ: 'i',
+  ị: 'i',
   // o variants
-  ò: 'o', ó: 'o', ỏ: 'o', õ: 'o', ọ: 'o',
-  ô: 'o', ồ: 'o', ố: 'o', ổ: 'o', ỗ: 'o', ộ: 'o',
-  ơ: 'o', ờ: 'o', ớ: 'o', ở: 'o', ỡ: 'o', ợ: 'o',
+  ò: 'o',
+  ó: 'o',
+  ỏ: 'o',
+  õ: 'o',
+  ọ: 'o',
+  ô: 'o',
+  ồ: 'o',
+  ố: 'o',
+  ổ: 'o',
+  ỗ: 'o',
+  ộ: 'o',
+  ơ: 'o',
+  ờ: 'o',
+  ớ: 'o',
+  ở: 'o',
+  ỡ: 'o',
+  ợ: 'o',
   // u variants
-  ù: 'u', ú: 'u', ủ: 'u', ũ: 'u', ụ: 'u',
-  ư: 'u', ừ: 'u', ứ: 'u', ử: 'u', ữ: 'u', ự: 'u',
+  ù: 'u',
+  ú: 'u',
+  ủ: 'u',
+  ũ: 'u',
+  ụ: 'u',
+  ư: 'u',
+  ừ: 'u',
+  ứ: 'u',
+  ử: 'u',
+  ữ: 'u',
+  ự: 'u',
   // y variants
-  ỳ: 'y', ý: 'y', ỷ: 'y', ỹ: 'y', ỵ: 'y',
+  ỳ: 'y',
+  ý: 'y',
+  ỷ: 'y',
+  ỹ: 'y',
+  ỵ: 'y',
   // d variant
   đ: 'd',
 };
@@ -92,7 +146,11 @@ export class SkuGeneratorService {
     let sku: string;
     do {
       const idStr = String(nextId).padStart(3, '0');
-      sku = this.formatSku({ category: categoryCode, id: idStr, date: dateStr });
+      sku = this.formatSku({
+        category: categoryCode,
+        id: idStr,
+        date: dateStr,
+      });
       const existing = await this.prisma.product.findUnique({
         where: { sku },
       });

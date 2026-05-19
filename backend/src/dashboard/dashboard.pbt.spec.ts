@@ -100,10 +100,10 @@ describe('Dashboard PBT', () => {
   it('P3: top N sort order and length constraint', () => {
     fc.assert(
       fc.property(
-        fc.array(
-          fc.record({ value: fc.integer({ min: 0, max: 10000 }) }),
-          { minLength: 0, maxLength: 100 },
-        ),
+        fc.array(fc.record({ value: fc.integer({ min: 0, max: 10000 }) }), {
+          minLength: 0,
+          maxLength: 100,
+        }),
         fc.integer({ min: 1, max: 50 }),
         fc.constantFrom('highest' as const, 'lowest' as const),
         (items, limit, type) => {
@@ -120,7 +120,9 @@ describe('Dashboard PBT', () => {
           // Sort order
           for (let i = 1; i < result.length; i++) {
             if (type === 'highest') {
-              expect(result[i - 1].value).toBeGreaterThanOrEqual(result[i].value);
+              expect(result[i - 1].value).toBeGreaterThanOrEqual(
+                result[i].value,
+              );
             } else {
               expect(result[i - 1].value).toBeLessThanOrEqual(result[i].value);
             }

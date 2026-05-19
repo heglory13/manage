@@ -1,4 +1,11 @@
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class StockAdjustDto {
   @IsString()
@@ -7,9 +14,17 @@ export class StockAdjustDto {
 
   @IsOptional()
   @IsString()
+  skuComboId?: string;
+
+  @IsOptional()
+  @IsString()
   warehousePositionId?: string;
 
-  @IsNumber()
+  @IsOptional()
+  @IsString()
+  storageZoneId?: string;
+
+  @IsInt({ message: 'So luong phai la so nguyen' })
   @Min(1, { message: 'Số lượng điều chỉnh phải lớn hơn 0' })
   quantity!: number;
 

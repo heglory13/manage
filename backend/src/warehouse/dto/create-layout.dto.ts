@@ -1,4 +1,11 @@
-import { IsString, IsInt, Min, IsNotEmpty, IsOptional, IsIn } from 'class-validator';
+import {
+  IsString,
+  IsInt,
+  Min,
+  IsNotEmpty,
+  IsOptional,
+  IsIn,
+} from 'class-validator';
 
 export class CreateLayoutDto {
   @IsString()

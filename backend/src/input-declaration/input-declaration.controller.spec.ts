@@ -8,6 +8,15 @@ describe('InputDeclarationController', () => {
   let inputService: Record<string, jest.Mock>;
   let skuComboService: Record<string, jest.Mock>;
 
+  const mockCurrentUser = {
+    userId: 'user-1',
+    email: 'admin@test.com',
+    role: 'ADMIN',
+    permissions: {
+      input: { view: true, create: true, save: true, edit: true, delete: true },
+    },
+  } as any;
+
   beforeEach(async () => {
     inputService = {
       getAllDeclarations: jest.fn(),
@@ -48,7 +57,7 @@ describe('InputDeclarationController', () => {
       const mockData = [{ id: '1', name: 'Oversize', createdAt: new Date() }];
       inputService.getAll.mockResolvedValue(mockData);
 
-      const result = await controller.getClassifications();
+      const result = await controller.getClassifications(mockCurrentUser);
       expect(result).toEqual(mockData);
       expect(inputService.getAll).toHaveBeenCalledWith('classification');
     });
@@ -57,7 +66,7 @@ describe('InputDeclarationController', () => {
       const mockData = [{ id: '1', name: 'Đen', createdAt: new Date() }];
       inputService.getAll.mockResolvedValue(mockData);
 
-      const result = await controller.getColors();
+      const result = await controller.getColors(mockCurrentUser);
       expect(result).toEqual(mockData);
       expect(inputService.getAll).toHaveBeenCalledWith('color');
     });
@@ -66,7 +75,7 @@ describe('InputDeclarationController', () => {
       const mockData = [{ id: '1', name: 'XL', createdAt: new Date() }];
       inputService.getAll.mockResolvedValue(mockData);
 
-      const result = await controller.getSizes();
+      const result = await controller.getSizes(mockCurrentUser);
       expect(result).toEqual(mockData);
       expect(inputService.getAll).toHaveBeenCalledWith('size');
     });
@@ -75,34 +84,52 @@ describe('InputDeclarationController', () => {
       const mockData = [{ id: '1', name: 'Cotton', createdAt: new Date() }];
       inputService.getAll.mockResolvedValue(mockData);
 
-      const result = await controller.getMaterials();
+      const result = await controller.getMaterials(mockCurrentUser);
       expect(result).toEqual(mockData);
       expect(inputService.getAll).toHaveBeenCalledWith('material');
     });
 
     it('should return product conditions', async () => {
-      const mockData = [{ id: '1', name: 'Đạt tiêu chuẩn', createdAt: new Date() }];
+      const mockData = [
+        { id: '1', name: 'Đạt tiêu chuẩn', createdAt: new Date() },
+      ];
       inputService.getAllProductConditions.mockResolvedValue(mockData);
 
-      const result = await controller.getProductConditions();
+      const result = await controller.getProductConditions(mockCurrentUser);
       expect(result).toEqual(mockData);
     });
 
     it('should return storage zones', async () => {
       const mockData = [
-        { id: '1', name: 'OV1', maxCapacity: 100, currentStock: 50, createdAt: new Date() },
+        {
+          id: '1',
+          name: 'OV1',
+          maxCapacity: 100,
+          currentStock: 50,
+          createdAt: new Date(),
+        },
       ];
       inputService.getAllStorageZones.mockResolvedValue(mockData);
 
-      const result = await controller.getStorageZones();
+      const result = await controller.getStorageZones(mockCurrentUser);
       expect(result).toEqual(mockData);
     });
 
     it('should return sku combos with pagination', async () => {
-      const mockData = { data: [], total: 0, page: 1, limit: 10, totalPages: 0 };
+      const mockData = {
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+        totalPages: 0,
+      };
       skuComboService.getAll.mockResolvedValue(mockData);
 
-      const result = await controller.getSkuCombos({ search: 'test', page: '1', limit: '10' });
+      const result = await controller.getSkuCombos(mockCurrentUser, {
+        search: 'test',
+        page: '1',
+        limit: '10',
+      } as any);
       expect(result).toEqual(mockData);
     });
   });
@@ -112,16 +139,23 @@ describe('InputDeclarationController', () => {
       const mockResult = { id: '1', name: 'Oversize', createdAt: new Date() };
       inputService.create.mockResolvedValue(mockResult);
 
-      const result = await controller.createClassification({ name: 'Oversize' });
+      const result = await controller.createClassification(mockCurrentUser, {
+        name: 'Oversize',
+      });
       expect(result).toEqual(mockResult);
-      expect(inputService.create).toHaveBeenCalledWith('classification', 'Oversize');
+      expect(inputService.create).toHaveBeenCalledWith(
+        'classification',
+        'Oversize',
+      );
     });
 
     it('should create color', async () => {
       const mockResult = { id: '1', name: 'Đen', createdAt: new Date() };
       inputService.create.mockResolvedValue(mockResult);
 
-      const result = await controller.createColor({ name: 'Đen' });
+      const result = await controller.createColor(mockCurrentUser, {
+        name: 'Đen',
+      });
       expect(result).toEqual(mockResult);
       expect(inputService.create).toHaveBeenCalledWith('color', 'Đen');
     });
@@ -130,7 +164,9 @@ describe('InputDeclarationController', () => {
       const mockResult = { id: '1', name: 'Mới', createdAt: new Date() };
       inputService.createProductCondition.mockResolvedValue(mockResult);
 
-      const result = await controller.createProductCondition({ name: 'Mới' });
+      const result = await controller.createProductCondition(mockCurrentUser, {
+        name: 'Mới',
+      });
       expect(result).toEqual(mockResult);
     });
 
@@ -144,12 +180,12 @@ describe('InputDeclarationController', () => {
       };
       inputService.createStorageZone.mockResolvedValue(mockResult);
 
-      const result = await controller.createStorageZone({
+      const result = await controller.createStorageZone(mockCurrentUser, {
         name: 'OV1',
         maxCapacity: 100,
       });
       expect(result).toEqual(mockResult);
-      expect(inputService.createStorageZone).toHaveBeenCalledWith('OV1', 100);
+      expect(inputService.createStorageZone).toHaveBeenCalledWith('OV1', 100, undefined);
     });
 
     it('should create sku combo', async () => {
@@ -159,10 +195,18 @@ describe('InputDeclarationController', () => {
         sizeId: 's1',
         materialId: 'm1',
       };
-      const mockResult = { id: '1', ...dto, compositeSku: 'A-B-C-D', createdAt: new Date() };
+      const mockResult = {
+        id: '1',
+        ...dto,
+        compositeSku: 'A-B-C-D',
+        createdAt: new Date(),
+      };
       skuComboService.create.mockResolvedValue(mockResult);
 
-      const result = await controller.createSkuCombo(dto);
+      const result = await controller.createSkuCombo(
+        mockCurrentUser,
+        dto as any,
+      );
       expect(result).toEqual(mockResult);
     });
 
@@ -184,7 +228,7 @@ describe('InputDeclarationController', () => {
       };
       inputService.importDeclarationsFromExcel.mockResolvedValue(mockResult);
 
-      const result = await controller.importDeclarations({
+      const result = await controller.importDeclarations(mockCurrentUser, {
         buffer: Buffer.from('excel'),
       });
 

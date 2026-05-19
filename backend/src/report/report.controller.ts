@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { Role } from '@prisma/client/index';
@@ -46,7 +54,10 @@ export class ReportController {
     @Query() query: NxtReportQueryDto,
     @Res() res: Response,
   ): Promise<void> {
-    const buffer = await this.reportService.exportNxtExcel(query.startDate, query.endDate);
+    const buffer = await this.reportService.exportNxtExcel(
+      query.startDate,
+      query.endDate,
+    );
 
     res.set({
       'Content-Type':

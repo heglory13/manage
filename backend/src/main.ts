@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
+import { json } from 'express';
 import { join } from 'path';
 import { AppModule } from './app.module.js';
 
@@ -9,7 +10,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const corsOrigins = (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
     .split(',')
-    .map(origin => origin.trim())
+    .map((origin) => origin.trim())
     .filter(Boolean);
 
   // Security: Helmet sets various HTTP headers for protection
@@ -26,6 +27,9 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   });
+
+  // Tăng giới hạn body để chứa base64 ảnh tem (tối đa ~3 ảnh × ~500KB)
+  app.use(json({ limit: '10mb' }));
 
   // Global API prefix
   app.setGlobalPrefix('api');

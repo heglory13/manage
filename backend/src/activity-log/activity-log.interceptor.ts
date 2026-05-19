@@ -83,8 +83,14 @@ export class ActivityLogInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap((responseData) => {
         // Fire-and-forget: don't await
-        const newData = action === 'DELETE' ? null : (responseData as Record<string, unknown>);
-        const logRecordId = recordId || (responseData as Record<string, unknown>)?.id as string || '';
+        const newData =
+          action === 'DELETE'
+            ? null
+            : (responseData as Record<string, unknown>);
+        const logRecordId =
+          recordId ||
+          ((responseData as Record<string, unknown>)?.id as string) ||
+          '';
 
         this.activityLogService
           .create({
@@ -94,7 +100,7 @@ export class ActivityLogInterceptor implements NestInterceptor {
             tableName,
             recordId: String(logRecordId),
             oldData: null,
-            newData: newData as Record<string, unknown> | null,
+            newData: newData,
           })
           .catch(() => {
             // Silently ignore logging errors

@@ -3,7 +3,10 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { InventoryTransactionStatus, TransactionType } from '@prisma/client/index';
+import {
+  InventoryTransactionStatus,
+  TransactionType,
+} from '@prisma/client/index';
 import { PrismaService } from '../prisma/prisma.service.js';
 import * as ExcelJS from 'exceljs';
 
@@ -16,6 +19,8 @@ export interface ReportFilters {
 export interface NxtReportItem {
   categoryId: string | null;
   categoryName: string;
+  productName: string;
+  sku: string;
   openingStock: number;
   openingValue: number;
   totalIn: number;
@@ -72,14 +77,13 @@ export class ReportService {
     return Buffer.from(buffer);
   }
 
-  async getNxtReport(startDate: string, endDate: string, categoryId?: string): Promise<NxtReportItem[]> {
+  async getNxtReport(
+    startDate: string,
+    endDate: string,
+    categoryId?: string,
+  ): Promise<NxtReportItem[]> {
     const start = new Date(`${startDate}T00:00:00`);
     const end = new Date(`${endDate}T23:59:59.999`);
-
-    const categories = await this.prisma.category.findMany({
-      where: categoryId ? { id: categoryId } : undefined,
-      orderBy: { name: 'asc' },
-    });
 
     const transactions = await this.prisma.inventoryTransaction.findMany({
       where: {
@@ -89,15 +93,44 @@ export class ReportService {
       },
       include: {
         category: true,
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
 
+    // Group by skuComboId (or categoryId if no skuCombo)
     const rows = new Map<string, NxtReportItem>();
-    for (const category of categories) {
-      rows.set(category.id, {
-        categoryId: category.id,
-        categoryName: category.name,
+
+    for (const transaction of transactions) {
+      const skuCombo = transaction.skuCombo;
+      const key = skuCombo
+        ? `sku:${skuCombo.id}`
+        : `cat:${transaction.categoryId || transaction.id}`;
+
+      const productName = skuCombo
+        ? [
+            skuCombo.classification?.name,
+            skuCombo.color?.name,
+            skuCombo.size?.name,
+            skuCombo.material?.name,
+          ]
+            .filter(Boolean)
+            .join(' - ')
+        : transaction.category?.name || '-';
+      const sku = skuCombo?.compositeSku || '-';
+
+      const row = rows.get(key) ?? {
+        categoryId: transaction.categoryId,
+        categoryName: transaction.category?.name || '-',
+        productName,
+        sku,
         openingStock: 0,
         openingValue: 0,
         totalIn: 0,
@@ -106,31 +139,18 @@ export class ReportService {
         totalOutValue: 0,
         closingStock: 0,
         closingValue: 0,
-      });
-    }
+      };
 
-    for (const transaction of transactions) {
-      if (!transaction.categoryId || !transaction.category) continue;
-      const row =
-        rows.get(transaction.categoryId) ??
-        {
-          categoryId: transaction.categoryId,
-          categoryName: transaction.category.name,
-          openingStock: 0,
-          openingValue: 0,
-          totalIn: 0,
-          totalInValue: 0,
-          totalOut: 0,
-          totalOutValue: 0,
-          closingStock: 0,
-          closingValue: 0,
-        };
-
-      const value = this.computeValue(transaction.quantity, Number(transaction.purchasePrice ?? 0));
+      const value = this.computeValue(
+        transaction.quantity,
+        Number(transaction.purchasePrice ?? 0),
+      );
       const isInbound = transaction.type === TransactionType.STOCK_IN;
 
       if (transaction.createdAt < start) {
-        row.openingStock += isInbound ? transaction.quantity : -transaction.quantity;
+        row.openingStock += isInbound
+          ? transaction.quantity
+          : -transaction.quantity;
         row.openingValue += isInbound ? value : -value;
       }
 
@@ -144,32 +164,40 @@ export class ReportService {
         }
       }
 
-      row.closingStock += isInbound ? transaction.quantity : -transaction.quantity;
+      row.closingStock += isInbound
+        ? transaction.quantity
+        : -transaction.quantity;
       row.closingValue += isInbound ? value : -value;
-      rows.set(row.categoryId!, row);
+      rows.set(key, row);
     }
 
-    return Array.from(rows.values()).map((row) => ({
-      ...row,
-      openingValue: Math.max(row.openingValue, 0),
-      totalInValue: Math.max(row.totalInValue, 0),
-      totalOutValue: Math.max(row.totalOutValue, 0),
-      closingValue: Math.max(row.closingValue, 0),
-    }));
+    return Array.from(rows.values())
+      .sort((a, b) => a.productName.localeCompare(b.productName, 'vi'))
+      .map((row) => ({
+        ...row,
+        openingValue: Math.max(row.openingValue, 0),
+        totalInValue: Math.max(row.totalInValue, 0),
+        totalOutValue: Math.max(row.totalOutValue, 0),
+        closingValue: Math.max(row.closingValue, 0),
+      }));
   }
 
   async exportNxtExcel(startDate: string, endDate: string): Promise<Buffer> {
     const data = await this.getNxtReport(startDate, endDate);
 
     if (data.length === 0) {
-      throw new NotFoundException('Không có dữ liệu trong khoảng thời gian đã chọn');
+      throw new NotFoundException(
+        'Không có dữ liệu trong khoảng thời gian đã chọn',
+      );
     }
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Bao cao NXT');
 
     worksheet.columns = [
-      { header: 'Danh mục', key: 'categoryName', width: 30 },
+      { header: 'Tên sản phẩm', key: 'productName', width: 35 },
+      { header: 'SKU', key: 'sku', width: 18 },
+      { header: 'Danh mục', key: 'categoryName', width: 20 },
       { header: 'Tồn đầu kỳ', key: 'openingStock', width: 15 },
       { header: 'Giá trị tồn đầu', key: 'openingValue', width: 18 },
       { header: 'Nhập', key: 'totalIn', width: 12 },
@@ -222,36 +250,66 @@ export class ReportService {
       categories: Map<string, string>;
       conditions: Map<string, string>;
     },
-  ): { valid: boolean; errors: Array<{ row: number; field: string; message: string }> } {
+  ): {
+    valid: boolean;
+    errors: Array<{ row: number; field: string; message: string }>;
+  } {
     const errors: Array<{ row: number; field: string; message: string }> = [];
 
     const category = String(row.category || '').trim();
     const quantity = Number(row.quantity);
     const purchasePrice =
-      row.purchasePrice === undefined || row.purchasePrice === null || row.purchasePrice === ''
+      row.purchasePrice === undefined ||
+      row.purchasePrice === null ||
+      row.purchasePrice === ''
         ? null
         : Number(row.purchasePrice);
     const salePrice =
-      row.salePrice === undefined || row.salePrice === null || row.salePrice === ''
+      row.salePrice === undefined ||
+      row.salePrice === null ||
+      row.salePrice === ''
         ? null
         : Number(row.salePrice);
 
     if (!category) {
-      errors.push({ row: rowIndex, field: 'Danh mục', message: 'Danh mục là bắt buộc' });
+      errors.push({
+        row: rowIndex,
+        field: 'Danh mục',
+        message: 'Danh mục là bắt buộc',
+      });
     } else if (!lookups.categories.has(category.toLowerCase())) {
-      errors.push({ row: rowIndex, field: 'Danh mục', message: `Danh mục "${category}" không tồn tại` });
+      errors.push({
+        row: rowIndex,
+        field: 'Danh mục',
+        message: `Danh mục "${category}" không tồn tại`,
+      });
     }
 
     if (isNaN(quantity) || quantity <= 0) {
-      errors.push({ row: rowIndex, field: 'Số lượng', message: 'Số lượng phải lớn hơn 0' });
+      errors.push({
+        row: rowIndex,
+        field: 'Số lượng',
+        message: 'Số lượng phải lớn hơn 0',
+      });
     }
 
-    if (purchasePrice !== null && (isNaN(purchasePrice) || purchasePrice <= 0)) {
-      errors.push({ row: rowIndex, field: 'Giá nhập', message: 'Giá nhập phải lớn hơn 0' });
+    if (
+      purchasePrice !== null &&
+      (isNaN(purchasePrice) || purchasePrice <= 0)
+    ) {
+      errors.push({
+        row: rowIndex,
+        field: 'Giá nhập',
+        message: 'Giá nhập phải lớn hơn 0',
+      });
     }
 
     if (salePrice !== null && (isNaN(salePrice) || salePrice <= 0)) {
-      errors.push({ row: rowIndex, field: 'Giá bán', message: 'Giá bán phải lớn hơn 0' });
+      errors.push({
+        row: rowIndex,
+        field: 'Giá bán',
+        message: 'Giá bán phải lớn hơn 0',
+      });
     }
 
     return { valid: errors.length === 0, errors };
@@ -260,7 +318,12 @@ export class ReportService {
   async importStockIn(
     fileBuffer: Buffer,
     userId: string,
-  ): Promise<{ success: boolean; totalRows: number; importedRows: number; errors?: Array<{ row: number; field: string; message: string }> }> {
+  ): Promise<{
+    success: boolean;
+    totalRows: number;
+    importedRows: number;
+    errors?: Array<{ row: number; field: string; message: string }>;
+  }> {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(fileBuffer as unknown as ExcelJS.Buffer);
 
@@ -274,8 +337,12 @@ export class ReportService {
       this.prisma.productCondition.findMany(),
     ]);
 
-    const categoryMap = new Map(categories.map((item) => [item.name.toLowerCase(), item.id]));
-    const conditionMap = new Map(conditions.map((item) => [item.name.toLowerCase(), item.id]));
+    const categoryMap = new Map(
+      categories.map((item) => [item.name.toLowerCase(), item.id]),
+    );
+    const conditionMap = new Map(
+      conditions.map((item) => [item.name.toLowerCase(), item.id]),
+    );
 
     const rows: Array<Record<string, unknown>> = [];
     worksheet.eachRow((row, rowNumber) => {
@@ -296,7 +363,8 @@ export class ReportService {
       throw new BadRequestException('File không có dữ liệu');
     }
 
-    const allErrors: Array<{ row: number; field: string; message: string }> = [];
+    const allErrors: Array<{ row: number; field: string; message: string }> =
+      [];
     for (let i = 0; i < rows.length; i++) {
       const { errors } = this.validateImportRow(rows[i], i + 2, {
         categories: categoryMap,
@@ -316,7 +384,9 @@ export class ReportService {
 
     let importedRows = 0;
     for (const row of rows) {
-      const categoryId = categoryMap.get(String(row.category).trim().toLowerCase())!;
+      const categoryId = categoryMap.get(
+        String(row.category).trim().toLowerCase(),
+      )!;
       await this.prisma.inventoryTransaction.create({
         data: {
           categoryId,
@@ -327,7 +397,8 @@ export class ReportService {
           status: InventoryTransactionStatus.ACTIVE,
           userId,
           productConditionId: row.condition
-            ? conditionMap.get(String(row.condition).trim().toLowerCase()) || null
+            ? conditionMap.get(String(row.condition).trim().toLowerCase()) ||
+              null
             : null,
           actualStockDate: new Date(),
           notes: row.note ? String(row.note) : null,

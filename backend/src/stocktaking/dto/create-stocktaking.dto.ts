@@ -69,8 +69,9 @@ export class SubmitStocktakingItemDto {
   discrepancyReason?: string;
 
   @IsOptional()
-  @IsString()
-  evidenceUrl?: string;
+  @IsArray()
+  @IsString({ each: true })
+  evidenceUrls?: string[];
 }
 
 export class SubmitStocktakingDto {

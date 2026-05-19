@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class UpdatePreliminaryCheckDto {
   @IsOptional()
@@ -19,8 +19,9 @@ export class UpdatePreliminaryCheckDto {
   warehouseTypeId?: string;
 
   @IsOptional()
-  @IsString()
-  imageUrl?: string;
+  @IsArray()
+  @IsString({ each: true })
+  imageUrls?: string[];
 
   @IsOptional()
   @IsString()

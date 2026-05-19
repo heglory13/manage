@@ -13,9 +13,15 @@ function createMockPrisma(existingCount: number = 0) {
     savedFilter: {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(existingCount),
-      create: jest.fn().mockImplementation((args: { data: Record<string, unknown> }) =>
-        Promise.resolve({ id: 'test-id', ...args.data, createdAt: new Date() }),
-      ),
+      create: jest
+        .fn()
+        .mockImplementation((args: { data: Record<string, unknown> }) =>
+          Promise.resolve({
+            id: 'test-id',
+            ...args.data,
+            createdAt: new Date(),
+          }),
+        ),
       findUnique: jest.fn().mockResolvedValue(null),
       delete: jest.fn().mockResolvedValue(undefined),
     },
@@ -32,9 +38,14 @@ describe('SavedFilter PBT', () => {
       fc.asyncProperty(
         fc.oneof(
           // Whitespace-only strings
-          fc.stringOf(fc.constantFrom(' ', '\t', '\n', '\r'), { minLength: 0, maxLength: 10 }),
+          fc.stringOf(fc.constantFrom(' ', '\t', '\n', '\r'), {
+            minLength: 0,
+            maxLength: 10,
+          }),
           // Valid strings with at least one non-whitespace char
-          fc.string({ minLength: 1, maxLength: 50 }).filter((s) => s.trim().length > 0),
+          fc
+            .string({ minLength: 1, maxLength: 50 })
+            .filter((s) => s.trim().length > 0),
         ),
         async (name) => {
           const mockPrisma = createMockPrisma(0);

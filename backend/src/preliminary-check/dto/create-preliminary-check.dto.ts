@@ -1,4 +1,11 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CreatePreliminaryCheckDto {
   @IsOptional()
@@ -20,8 +27,9 @@ export class CreatePreliminaryCheckDto {
   warehouseTypeId?: string;
 
   @IsOptional()
-  @IsString()
-  imageUrl?: string;
+  @IsArray()
+  @IsString({ each: true })
+  imageUrls?: string[];
 
   @IsOptional()
   @IsString()

@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsString, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateStorageZoneDto {
   @IsString()
@@ -8,4 +8,8 @@ export class CreateStorageZoneDto {
   @IsInt()
   @Min(1, { message: 'Sức chứa tối đa phải lớn hơn 0' })
   maxCapacity!: number;
+
+  @IsOptional()
+  @IsString()
+  warehouseTypeId?: string;
 }

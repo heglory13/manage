@@ -1,4 +1,11 @@
-import { IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { OrderPlanType } from '@prisma/client/index';
 
 export class CreateOrderPlanDto {

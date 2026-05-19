@@ -30,7 +30,12 @@ export interface PaginatedResponse<T> {
   totalPages: number;
 }
 
-type StocktakingMode = 'full' | 'selected' | 'category' | 'warehouseType' | 'product';
+type StocktakingMode =
+  | 'full'
+  | 'selected'
+  | 'category'
+  | 'warehouseType'
+  | 'product';
 
 type StocktakingCategorySnapshot = {
   categoryId: string | null;
@@ -48,9 +53,31 @@ export class StocktakingService {
     private readonly inventoryService: InventoryService,
   ) {}
 
+  /**
+   * Get stock for a category at a specific point in time (cutoffDate).
+   * If cutoffDate is not provided, returns current stock.
+   */
+  private buildCutoffWhere(
+    cutoffDate?: Date,
+  ): Prisma.InventoryTransactionWhereInput {
+    if (!cutoffDate) return {};
+    return {
+      OR: [
+        { actualStockDate: { lte: cutoffDate } },
+        {
+          AND: [{ actualStockDate: null }, { createdAt: { lte: cutoffDate } }],
+        },
+      ],
+    };
+  }
+
   calculateDiscrepancies(
     items: Array<{ systemQuantity: number; actualQuantity: number }>,
-  ): Array<{ systemQuantity: number; actualQuantity: number; discrepancy: number }> {
+  ): Array<{
+    systemQuantity: number;
+    actualQuantity: number;
+    discrepancy: number;
+  }> {
     return items.map((item) => ({
       ...item,
       discrepancy: item.actualQuantity - item.systemQuantity,
@@ -70,7 +97,7 @@ export class StocktakingService {
       return {
         valid: false,
         message:
-          'Vui lÃ²ng Ä‘iá»n nguyÃªn nhÃ¢n chÃªnh lá»‡ch cho táº¥t cáº£ cÃ¡c dÃ²ng cÃ³ sai lá»‡ch',
+          'Vui lòng điền nguyên nhân chênh lệch cho tất cả các dòng có sai lệch',
       };
     }
 
@@ -88,7 +115,7 @@ export class StocktakingService {
       return {
         valid: false,
         message:
-          'YÃªu cáº§u Ä‘Ã­nh kÃ¨m áº£nh/file minh chá»©ng cho cÃ¡c dÃ²ng cÃ³ sai lá»‡ch',
+          'Yêu cầu đính kèm ảnh/file minh chứng cho các dòng có sai lệch',
       };
     }
 
@@ -132,16 +159,22 @@ export class StocktakingService {
     if (mode === 'product') {
       // Product mode uses skuComboIds — resolve categories from transactions
       if (!skuComboIds || skuComboIds.length === 0) {
-        throw new BadRequestException('Vui long chon it nhat mot san pham khi kiem ke theo san pham');
+        throw new BadRequestException(
+          'Vui long chon it nhat mot san pham khi kiem ke theo san pham',
+        );
       }
       const transactions = await this.prisma.inventoryTransaction.findMany({
         where: { skuComboId: { in: skuComboIds }, categoryId: { not: null } },
         select: { categoryId: true },
         distinct: ['categoryId'],
       });
-      const ids = transactions.map((t) => t.categoryId).filter(Boolean) as string[];
+      const ids = transactions
+        .map((t) => t.categoryId)
+        .filter(Boolean) as string[];
       if (ids.length === 0) {
-        throw new BadRequestException('Khong tim thay danh muc nao tu cac san pham da chon');
+        throw new BadRequestException(
+          'Khong tim thay danh muc nao tu cac san pham da chon',
+        );
       }
       return [...new Set(ids)];
     }
@@ -149,7 +182,7 @@ export class StocktakingService {
     if (mode === 'selected') {
       if (!productIds || productIds.length === 0) {
         throw new BadRequestException(
-          'Vui lÃ²ng chá»n Ã­t nháº¥t má»™t sáº£n pháº©m khi kiá»ƒm kÃª theo danh sÃ¡ch',
+          'Vui lòng chọn ít nhất một sản phẩm khi kiểm kê theo danh sách',
         );
       }
 
@@ -186,7 +219,9 @@ export class StocktakingService {
         select: { categoryId: true },
       });
 
-      return [...new Set(checks.map((check) => check.categoryId).filter(Boolean))] as string[];
+      return [
+        ...new Set(checks.map((check) => check.categoryId).filter(Boolean)),
+      ] as string[];
     }
 
     const categories = await this.prisma.category.findMany({
@@ -203,30 +238,55 @@ export class StocktakingService {
     categoryIds?: string[],
     warehouseTypeIds?: string[],
     skuComboIds?: string[],
+    cutoffDate?: Date,
   ): Promise<StocktakingCategorySnapshot[]> {
-    // For product mode: create snapshots per SKU combo
+    const cutoffWhere = this.buildCutoffWhere(cutoffDate);
+
+    // Product mode: create one snapshot per selected SKU combo
     if (mode === 'product' && skuComboIds && skuComboIds.length > 0) {
       const combos = await this.prisma.skuCombo.findMany({
         where: { id: { in: skuComboIds } },
-        include: { classification: true, color: true, size: true, material: true },
+        include: {
+          classification: true,
+          color: true,
+          size: true,
+          material: true,
+        },
       });
 
       return Promise.all(
         combos.map(async (combo) => {
-          const productName = [combo.classification?.name, combo.color?.name, combo.size?.name, combo.material?.name].filter(Boolean).join(' - ');
-          // Get stock for this specific SKU combo
+          const productName = [
+            combo.classification?.name,
+            combo.color?.name,
+            combo.size?.name,
+            combo.material?.name,
+          ]
+            .filter(Boolean)
+            .join(' - ');
           const transactions = await this.prisma.inventoryTransaction.findMany({
-            where: { skuComboId: combo.id, status: InventoryTransactionStatus.ACTIVE },
+            where: {
+              skuComboId: combo.id,
+              status: InventoryTransactionStatus.ACTIVE,
+              ...cutoffWhere,
+            },
             select: { type: true, quantity: true, categoryId: true },
+            orderBy: { createdAt: 'desc' },
           });
-          const stock = transactions.reduce((sum, t) =>
-            sum + (t.type === TransactionType.STOCK_IN ? t.quantity : -t.quantity), 0);
-          const categoryId = transactions[0]?.categoryId || null;
+          const stock = transactions.reduce(
+            (sum, t) =>
+              sum +
+              (t.type === TransactionType.STOCK_IN ? t.quantity : -t.quantity),
+            0,
+          );
+          // Use the most recent transaction's categoryId as it's most likely correct
+          const categoryId =
+            transactions.find((t) => t.categoryId)?.categoryId ?? null;
 
           return {
             categoryId,
             itemCode: combo.compositeSku,
-            itemLabel: productName,
+            itemLabel: productName || combo.compositeSku,
             systemQuantity: Math.max(stock, 0),
             actualQuantity: 0,
             discrepancy: 0,
@@ -235,6 +295,7 @@ export class StocktakingService {
       );
     }
 
+    // Full / category / warehouseType: one snapshot per SKU combo found in those categories
     const resolvedCategoryIds = await this.resolveCategoryIds(
       mode,
       productIds,
@@ -244,31 +305,78 @@ export class StocktakingService {
     );
 
     if (resolvedCategoryIds.length === 0) {
-      throw new BadRequestException('KhÃ´ng tÃ¬m tháº¥y danh má»¥c nÃ o Ä‘á»ƒ kiá»ƒm kÃª');
+      throw new BadRequestException('Không tìm thấy danh mục nào để kiểm kê');
     }
 
-    const categories = await this.prisma.category.findMany({
-      where: { id: { in: resolvedCategoryIds } },
-      select: { id: true, code: true, name: true },
-      orderBy: { name: 'asc' },
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: {
+        categoryId: { in: resolvedCategoryIds },
+        status: InventoryTransactionStatus.ACTIVE,
+        ...cutoffWhere,
+      },
+      include: {
+        skuCombo: {
+          include: {
+            classification: true,
+            color: true,
+            size: true,
+            material: true,
+          },
+        },
+        category: { select: { id: true, code: true, name: true } },
+      },
     });
 
-    if (categories.length === 0) {
-      throw new BadRequestException('KhÃ´ng tÃ¬m tháº¥y danh má»¥c nÃ o Ä‘á»ƒ kiá»ƒm kÃª');
+    if (transactions.length === 0) {
+      throw new BadRequestException(
+        'Không tìm thấy giao dịch nào để kiểm kê trong phạm vi đã chọn',
+      );
     }
 
-    return Promise.all(
-      categories.map(async (category) => ({
-        categoryId: category.id,
-        itemCode: category.code,
-        itemLabel: category.name,
-        systemQuantity: await this.inventoryService.getCurrentStockByCategory(
-          category.id,
-        ),
-        actualQuantity: 0,
-        discrepancy: 0,
-      })),
-    );
+    // Group by skuComboId → per-SKU snapshot; fallback per-category for legacy transactions
+    const map = new Map<string, StocktakingCategorySnapshot>();
+    for (const tx of transactions) {
+      const key = tx.skuComboId
+        ? `sku:${tx.skuComboId}`
+        : `cat:${tx.categoryId}`;
+      const delta =
+        tx.type === TransactionType.STOCK_IN ? tx.quantity : -tx.quantity;
+
+      if (!map.has(key)) {
+        let itemCode: string;
+        let itemLabel: string;
+        if (tx.skuComboId && tx.skuCombo) {
+          itemCode = tx.skuCombo.compositeSku;
+          itemLabel =
+            [
+              tx.skuCombo.classification?.name,
+              tx.skuCombo.color?.name,
+              tx.skuCombo.size?.name,
+              tx.skuCombo.material?.name,
+            ]
+              .filter(Boolean)
+              .join(' - ') || tx.skuCombo.compositeSku;
+        } else {
+          itemCode = tx.category?.code ?? '-';
+          itemLabel = tx.category?.name ?? '-';
+        }
+        map.set(key, {
+          categoryId: tx.categoryId,
+          itemCode,
+          itemLabel,
+          systemQuantity: delta,
+          actualQuantity: 0,
+          discrepancy: 0,
+        });
+      } else {
+        map.get(key)!.systemQuantity += delta;
+      }
+    }
+
+    return Array.from(map.values()).map((item) => ({
+      ...item,
+      systemQuantity: Math.max(item.systemQuantity, 0),
+    }));
   }
 
   private async getLatestAdjustmentPrice(categoryId: string) {
@@ -282,7 +390,8 @@ export class StocktakingService {
       select: { purchasePrice: true, salePrice: true },
     });
 
-    const purchasePrice = latestTransaction?.purchasePrice ?? new Prisma.Decimal(0);
+    const purchasePrice =
+      latestTransaction?.purchasePrice ?? new Prisma.Decimal(0);
     const salePrice = latestTransaction?.salePrice ?? purchasePrice;
 
     return {
@@ -300,15 +409,16 @@ export class StocktakingService {
     warehouseTypeIds?: string[],
     skuComboIds?: string[],
   ) {
+    const cutoffDate = cutoffTime ? new Date(cutoffTime) : new Date();
+
     const snapshots = await this.buildCategorySnapshots(
       mode,
       productIds,
       categoryIds,
       warehouseTypeIds,
       skuComboIds,
+      cutoffDate,
     );
-
-    const cutoffDate = cutoffTime ? new Date(cutoffTime) : new Date();
 
     const record = await this.prisma.stocktakingRecord.create({
       data: {
@@ -323,7 +433,11 @@ export class StocktakingService {
       include: this.recordInclude,
     });
 
-    await this.recordStatusChange(record.id, StocktakingStatus.CHECKING, userId);
+    await this.recordStatusChange(
+      record.id,
+      StocktakingStatus.CHECKING,
+      userId,
+    );
 
     return record;
   }
@@ -335,12 +449,23 @@ export class StocktakingService {
     });
 
     if (!record) {
-      throw new NotFoundException('BiÃªn báº£n kiá»ƒm kÃª khÃ´ng tá»“n táº¡i');
+      throw new NotFoundException('Biên bản kiểm kê không tồn tại');
     }
 
     if (record.status !== StocktakingStatus.CHECKING) {
       throw new BadRequestException(
-        'Chá»‰ cÃ³ thá»ƒ submit biÃªn báº£n á»Ÿ tráº¡ng thÃ¡i Äang kiá»ƒm kÃª',
+        'Chỉ có thể submit biên bản ở trạng thái Đang kiểm kê',
+      );
+    }
+
+    const recordItemIds = new Set(record.items.map((i) => i.id));
+    const submittedIds = new Set(items.map((i) => i.itemId));
+    const missing = [...recordItemIds].filter(
+      (itemId) => !submittedIds.has(itemId),
+    );
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Vui lòng nhập số lượng cho tất cả ${record.items.length} mặt hàng trong biên bản kiểm kê.`,
       );
     }
 
@@ -352,13 +477,16 @@ export class StocktakingService {
         return existingItem;
       }
 
-      const discrepancy = submitted.actualQuantity - existingItem.systemQuantity;
+      const discrepancy =
+        submitted.actualQuantity - existingItem.systemQuantity;
       return {
         ...existingItem,
         actualQuantity: submitted.actualQuantity,
         discrepancy,
         discrepancyReason: submitted.discrepancyReason || null,
-        evidenceUrl: submitted.evidenceUrl || existingItem.evidenceUrl,
+        evidenceUrl: submitted.evidenceUrls?.length
+          ? JSON.stringify(submitted.evidenceUrls)
+          : existingItem.evidenceUrl,
       };
     });
 
@@ -378,7 +506,9 @@ export class StocktakingService {
             actualQuantity: submitted.actualQuantity,
             discrepancy: submitted.actualQuantity - item.systemQuantity,
             discrepancyReason: submitted.discrepancyReason || null,
-            evidenceUrl: submitted.evidenceUrl || undefined,
+            evidenceUrl: submitted.evidenceUrls?.length
+              ? JSON.stringify(submitted.evidenceUrls)
+              : undefined,
           },
         });
       })
@@ -412,52 +542,73 @@ export class StocktakingService {
     });
 
     if (!record) {
-      throw new NotFoundException('BiÃªn báº£n kiá»ƒm kÃª khÃ´ng tá»“n táº¡i');
+      throw new NotFoundException('Biên bản kiểm kê không tồn tại');
     }
 
-    if (userRole !== 'ADMIN' && record.status !== StocktakingStatus.PENDING) {
+    if (record.status !== StocktakingStatus.PENDING) {
       throw new BadRequestException(
-        'Chá»‰ cÃ³ thá»ƒ phÃª duyá»‡t biÃªn báº£n á»Ÿ tráº¡ng thÃ¡i Chá» duyá»‡t',
+        'Chỉ có thể phê duyệt biên bản ở trạng thái Chờ duyệt',
       );
     }
 
     const actorId = userId || record.createdBy;
-    const adjustmentOps: Prisma.PrismaPromise<unknown>[] = [];
 
+    // Step 1: Pre-validate ALL items with negative discrepancy before applying any adjustments
     for (const item of record.items) {
-      if (!item.categoryId || item.discrepancy === 0) {
+      if (!item.categoryId || item.discrepancy >= 0 || item.isBalanced) {
         continue;
       }
 
-      if (item.discrepancy < 0) {
-        const currentStock = await this.inventoryService.getCurrentStockByCategory(
-          item.categoryId,
-        );
-        if (currentStock < Math.abs(item.discrepancy)) {
-          throw new BadRequestException(
-            `KhÃ´ng thá»ƒ duyá»‡t kiá»ƒm kÃª cho ${item.itemLabel} vÃ¬ tá»“n hiá»‡n táº¡i khÃ´ng Ä‘á»§ Ä‘á»ƒ giáº£m`,
-          );
-        }
+      // Resolve skuComboId from itemCode (SKU)
+      let skuComboId: string | undefined;
+      if (item.itemCode) {
+        const skuCombo = await this.prisma.skuCombo.findFirst({
+          where: { compositeSku: item.itemCode },
+        });
+        skuComboId = skuCombo?.id;
       }
 
-      const latestPrice = await this.getLatestAdjustmentPrice(item.categoryId);
-      adjustmentOps.push(
-        this.prisma.inventoryTransaction.create({
-          data: {
-            categoryId: item.categoryId,
-            type:
-              item.discrepancy > 0
-                ? TransactionType.STOCK_IN
-                : TransactionType.STOCK_OUT,
-            quantity: Math.abs(item.discrepancy),
-            purchasePrice: latestPrice.purchasePrice,
-            salePrice: latestPrice.salePrice,
-            status: InventoryTransactionStatus.ACTIVE,
-            userId: actorId,
-            notes: `[ADJUSTMENT] Stocktaking approval ${record.id} - ${item.itemCode} ${item.itemLabel}`,
-          },
-        }),
+      const currentStock = skuComboId
+        ? await this.inventoryService.getCurrentStockBySkuCombo(skuComboId)
+        : await this.inventoryService.getCurrentStockByCategory(
+            item.categoryId,
+          );
+
+      if (currentStock < Math.abs(item.discrepancy)) {
+        throw new BadRequestException(
+          `Tồn kho không đủ để thực hiện điều chỉnh giảm cho mục "${item.itemLabel}"`,
+        );
+      }
+    }
+
+    // Step 2: All validations passed, now apply adjustments
+    for (const item of record.items) {
+      if (!item.categoryId || item.discrepancy === 0 || item.isBalanced) {
+        continue;
+      }
+
+      // Resolve skuComboId from itemCode (SKU)
+      let skuComboId: string | undefined;
+      if (item.itemCode) {
+        const skuCombo = await this.prisma.skuCombo.findFirst({
+          where: { compositeSku: item.itemCode },
+        });
+        skuComboId = skuCombo?.id;
+      }
+
+      await this.inventoryService.balanceStockByCategory(
+        item.categoryId,
+        Math.abs(item.discrepancy),
+        item.discrepancy > 0 ? 'INCREASE' : 'DECREASE',
+        actorId,
+        `[STOCKTAKING] Phe duyet bien ban ${record.id} - ${item.itemCode} ${item.itemLabel}`,
+        { skuComboId },
       );
+
+      await this.prisma.stocktakingItem.update({
+        where: { id: item.id },
+        data: { isBalanced: true, balancedAt: new Date() },
+      });
     }
 
     const [updatedRecord] = await this.prisma.$transaction([
@@ -466,7 +617,6 @@ export class StocktakingService {
         data: { status: StocktakingStatus.APPROVED },
         include: this.recordInclude,
       }),
-      ...adjustmentOps,
     ]);
 
     await this.recordStatusChange(id, StocktakingStatus.APPROVED, actorId);
@@ -480,12 +630,12 @@ export class StocktakingService {
     });
 
     if (!record) {
-      throw new NotFoundException('BiÃªn báº£n kiá»ƒm kÃª khÃ´ng tá»“n táº¡i');
+      throw new NotFoundException('Biên bản kiểm kê không tồn tại');
     }
 
-    if (userRole !== 'ADMIN' && record.status !== StocktakingStatus.PENDING) {
+    if (record.status !== StocktakingStatus.PENDING) {
       throw new BadRequestException(
-        'Chá»‰ cÃ³ thá»ƒ tá»« chá»‘i biÃªn báº£n á»Ÿ tráº¡ng thÃ¡i Chá» duyá»‡t',
+        'Chỉ có thể từ chối biên bản ở trạng thái Chờ duyệt',
       );
     }
 
@@ -495,12 +645,7 @@ export class StocktakingService {
       include: this.recordInclude,
     });
 
-    await this.recordStatusChange(
-      id,
-      StocktakingStatus.REJECTED,
-      userId,
-      note,
-    );
+    await this.recordStatusChange(id, StocktakingStatus.REJECTED, userId, note);
 
     return updatedRecord;
   }
@@ -515,56 +660,156 @@ export class StocktakingService {
       throw new NotFoundException('Bien ban kiem ke khong ton tai');
     }
 
-    if (record.status !== StocktakingStatus.PENDING && record.status !== StocktakingStatus.APPROVED) {
-      throw new BadRequestException('Chi co the can bang kho khi bien ban o trang thai Cho duyet hoac Da duyet');
+    if (
+      record.status !== StocktakingStatus.PENDING &&
+      record.status !== StocktakingStatus.APPROVED
+    ) {
+      throw new BadRequestException(
+        'Chi co the can bang kho khi bien ban o trang thai Cho duyet hoac Da duyet',
+      );
     }
 
-    const adjustmentOps: Prisma.PrismaPromise<unknown>[] = [];
     let adjustedCount = 0;
 
     for (const item of record.items) {
-      if (!item.categoryId || item.discrepancy === 0) continue;
+      if (!item.categoryId || item.discrepancy === 0 || item.isBalanced)
+        continue;
 
-      const latestPrice = await this.getLatestAdjustmentPrice(item.categoryId);
+      let skuComboId: string | undefined;
+      if (item.itemCode) {
+        const skuCombo = await this.prisma.skuCombo.findFirst({
+          where: { compositeSku: item.itemCode },
+        });
+        skuComboId = skuCombo?.id;
+      }
 
-      adjustmentOps.push(
-        this.prisma.inventoryTransaction.create({
-          data: {
-            categoryId: item.categoryId,
-            type: item.discrepancy > 0 ? TransactionType.STOCK_IN : TransactionType.STOCK_OUT,
-            quantity: Math.abs(item.discrepancy),
-            purchasePrice: latestPrice.purchasePrice,
-            salePrice: latestPrice.salePrice,
-            status: InventoryTransactionStatus.ACTIVE,
-            userId,
-            notes: `[ADJUSTMENT] Dieu chinh can bang kho theo Bien ban kiem ke ${record.id} - ${item.itemCode} ${item.itemLabel}`,
-          },
-        }),
+      await this.inventoryService.balanceStockByCategory(
+        item.categoryId,
+        Math.abs(item.discrepancy),
+        item.discrepancy > 0 ? 'INCREASE' : 'DECREASE',
+        userId,
+        `Can bang kho theo Bien ban kiem ke ${record.id} - ${item.itemCode} ${item.itemLabel}`,
+        { skuComboId },
       );
+
+      await this.prisma.stocktakingItem.update({
+        where: { id: item.id },
+        data: { isBalanced: true, balancedAt: new Date() },
+      });
+
       adjustedCount++;
     }
 
     if (adjustedCount === 0) {
-      return { success: true, message: 'Khong co chenh lech nao can dieu chinh', adjustedCount: 0 };
+      return {
+        success: true,
+        message:
+          'Khong co chenh lech nao can dieu chinh (co the da can bang het roi)',
+        adjustedCount: 0,
+      };
     }
 
     // Update record status to APPROVED if still PENDING
     if (record.status === StocktakingStatus.PENDING) {
-      adjustmentOps.push(
-        this.prisma.stocktakingRecord.update({
-          where: { id },
-          data: { status: StocktakingStatus.APPROVED, submittedAt: new Date() },
-        }),
-      );
+      await this.prisma.stocktakingRecord.update({
+        where: { id },
+        data: { status: StocktakingStatus.APPROVED, submittedAt: new Date() },
+      });
       await this.recordStatusChange(id, StocktakingStatus.APPROVED, userId);
     }
-
-    await this.prisma.$transaction(adjustmentOps);
 
     return {
       success: true,
       message: `Da can bang kho thanh cong: ${adjustedCount} dieu chinh`,
       adjustedCount,
+    };
+  }
+
+  async balanceStockItem(itemId: string, userId: string) {
+    const item = await this.prisma.stocktakingItem.findUnique({
+      where: { id: itemId },
+      include: { record: true },
+    });
+
+    if (!item) {
+      throw new NotFoundException('Dong kiem ke khong ton tai');
+    }
+
+    if (item.discrepancy === 0) {
+      throw new BadRequestException(
+        'Dong nay khong co chenh lech, khong can can bang',
+      );
+    }
+
+    if (item.isBalanced) {
+      throw new BadRequestException('Dong nay da duoc can bang kho roi');
+    }
+
+    if (
+      item.record.status !== StocktakingStatus.PENDING &&
+      item.record.status !== StocktakingStatus.APPROVED
+    ) {
+      throw new BadRequestException(
+        'Chi co the can bang kho khi bien ban o trang thai Cho duyet hoac Da duyet',
+      );
+    }
+
+    if (!item.categoryId) {
+      throw new BadRequestException(
+        'Dong nay khong co danh muc, khong the can bang',
+      );
+    }
+
+    let skuComboId: string | undefined;
+    if (item.itemCode) {
+      const skuCombo = await this.prisma.skuCombo.findFirst({
+        where: { compositeSku: item.itemCode },
+      });
+      skuComboId = skuCombo?.id;
+    }
+
+    await this.inventoryService.balanceStockByCategory(
+      item.categoryId,
+      Math.abs(item.discrepancy),
+      item.discrepancy > 0 ? 'INCREASE' : 'DECREASE',
+      userId,
+      `Can bang kho theo Bien ban kiem ke ${item.recordId} - ${item.itemCode} ${item.itemLabel}`,
+      { skuComboId },
+    );
+
+    await this.prisma.stocktakingItem.update({
+      where: { id: itemId },
+      data: { isBalanced: true, balancedAt: new Date() },
+    });
+
+    // If all discrepancy items are now balanced, move record to APPROVED
+    const unbalancedCount = await this.prisma.stocktakingItem.count({
+      where: {
+        recordId: item.recordId,
+        discrepancy: { not: 0 },
+        isBalanced: false,
+      },
+    });
+
+    if (
+      unbalancedCount === 0 &&
+      item.record.status === StocktakingStatus.PENDING
+    ) {
+      await this.prisma.stocktakingRecord.update({
+        where: { id: item.recordId },
+        data: { status: StocktakingStatus.APPROVED, submittedAt: new Date() },
+      });
+      await this.recordStatusChange(
+        item.recordId,
+        StocktakingStatus.APPROVED,
+        userId,
+      );
+    }
+
+    return {
+      success: true,
+      message: `Da can bang kho cho dong: ${item.itemLabel}`,
+      remainingUnbalanced: unbalancedCount,
     };
   }
 
@@ -590,7 +835,7 @@ export class StocktakingService {
     });
 
     if (!record) {
-      throw new NotFoundException('BiÃªn báº£n kiá»ƒm kÃª khÃ´ng tá»“n táº¡i');
+      throw new NotFoundException('Biên bản kiểm kê không tồn tại');
     }
 
     return this.prisma.stocktakingStatusHistory.findMany({
@@ -606,9 +851,19 @@ export class StocktakingService {
     if (!record) {
       throw new NotFoundException('Biên bản kiểm kê không tồn tại');
     }
+    if (
+      record.status === StocktakingStatus.APPROVED ||
+      record.status === StocktakingStatus.PENDING
+    ) {
+      throw new BadRequestException(
+        'Không thể xóa biên bản kiểm kê đã nộp hoặc đã duyệt.',
+      );
+    }
     // Delete related items and history first
     await this.prisma.$transaction([
-      this.prisma.stocktakingStatusHistory.deleteMany({ where: { recordId: id } }),
+      this.prisma.stocktakingStatusHistory.deleteMany({
+        where: { recordId: id },
+      }),
       this.prisma.stocktakingItem.deleteMany({ where: { recordId: id } }),
       this.prisma.stocktakingRecord.delete({ where: { id } }),
     ]);
@@ -622,7 +877,7 @@ export class StocktakingService {
     });
 
     if (!record) {
-      throw new NotFoundException('BiÃªn báº£n kiá»ƒm kÃª khÃ´ng tá»“n táº¡i');
+      throw new NotFoundException('Biên bản kiểm kê không tồn tại');
     }
 
     return record;
@@ -637,12 +892,12 @@ export class StocktakingService {
     });
 
     if (!item) {
-      throw new NotFoundException('DÃ²ng kiá»ƒm kÃª khÃ´ng tá»“n táº¡i');
+      throw new NotFoundException('Dòng kiểm kê không tồn tại');
     }
 
     if (item.record.status !== StocktakingStatus.CHECKING) {
       throw new BadRequestException(
-        'Chá»‰ cÃ³ thá»ƒ cáº­p nháº­t khi biÃªn báº£n Ä‘ang á»Ÿ tráº¡ng thÃ¡i kiá»ƒm kÃª',
+        'Chỉ có thể cập nhật khi biên bản đang ở trạng thái kiểm kê',
       );
     }
 
@@ -660,7 +915,9 @@ export class StocktakingService {
     });
   }
 
-  async findAll(filters: StocktakingFilters): Promise<PaginatedResponse<unknown>> {
+  async findAll(
+    filters: StocktakingFilters,
+  ): Promise<PaginatedResponse<unknown>> {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 10;
     const skip = (page - 1) * limit;

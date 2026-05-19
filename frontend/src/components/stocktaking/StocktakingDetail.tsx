@@ -1,6 +1,4 @@
-import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Button } from '../ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { getStatusColor, getStatusLabel, formatDateTime } from '../../lib/utils';
@@ -29,12 +27,9 @@ interface StocktakingDetailProps {
       difference: number;
     }[];
   };
-  onSubmit: () => void;
-  onApprove?: () => void;
-  onReject?: () => void;
 }
 
-export default function StocktakingDetail({ data, onSubmit, onApprove, onReject }: StocktakingDetailProps) {
+export default function StocktakingDetail({ data }: StocktakingDetailProps) {
   return (
     <div className="space-y-6">
       <Card>
@@ -140,24 +135,6 @@ export default function StocktakingDetail({ data, onSubmit, onApprove, onReject 
         </TabsContent>
       </Tabs>
 
-      {data.status === 'SUBMITTED' && (
-        <div className="flex justify-end gap-2">
-          <Button variant="destructive" onClick={onReject}>
-            Từ chối
-          </Button>
-          <Button onClick={onApprove}>
-            Phê duyệt
-          </Button>
-        </div>
-      )}
-
-      {data.status === 'DRAFT' && (
-        <div className="flex justify-end">
-          <Button onClick={onSubmit}>
-            Gửi phiếu kiểm kho
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

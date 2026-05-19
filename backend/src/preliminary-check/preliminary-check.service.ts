@@ -20,12 +20,17 @@ export interface PaginatedResponse<T> {
   totalPages: number;
 }
 
+function serializeImageUrls(urls?: string[]): string | null {
+  if (!urls || urls.length === 0) return null;
+  return JSON.stringify(urls);
+}
+
 type PreliminaryCheckPayload = {
   categoryId?: string;
   classificationId?: string;
   quantity: number;
   warehouseTypeId?: string;
-  imageUrl?: string;
+  imageUrls?: string[];
   note?: string;
 };
 
@@ -70,17 +75,15 @@ export class PreliminaryCheckService {
   }
 
   async create(dto: PreliminaryCheckPayload, userId: string) {
-    const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
-
     await this.validateReferenceData(dto);
 
-    return preliminaryCheckClient.create({
+    return this.prisma.preliminaryCheck.create({
       data: {
         categoryId: dto.categoryId || null,
         classificationId: dto.classificationId || null,
         quantity: dto.quantity,
         warehouseTypeId: dto.warehouseTypeId || null,
-        imageUrl: dto.imageUrl || null,
+        imageUrl: serializeImageUrls(dto.imageUrls),
         note: dto.note || null,
         status: PreliminaryCheckStatus.PENDING,
         createdBy: userId,
@@ -96,19 +99,20 @@ export class PreliminaryCheckService {
     });
   }
 
-  async findAll(filters: PreliminaryCheckFilters): Promise<PaginatedResponse<unknown>> {
-    const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
+  async findAll(
+    filters: PreliminaryCheckFilters,
+  ): Promise<PaginatedResponse<unknown>> {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 10;
     const skip = (page - 1) * limit;
 
     const where: Record<string, unknown> = {};
-    if (filters.status) {
+    if (filters.status && filters.status.trim() !== '') {
       where.status = filters.status;
     }
 
     const [data, total] = await Promise.all([
-      preliminaryCheckClient.findMany({
+      this.prisma.preliminaryCheck.findMany({
         where,
         skip,
         take: limit,
@@ -122,7 +126,7 @@ export class PreliminaryCheckService {
         },
         orderBy: { createdAt: 'desc' },
       }),
-      preliminaryCheckClient.count({ where }),
+      this.prisma.preliminaryCheck.count({ where }),
     ]);
 
     return {
@@ -135,8 +139,7 @@ export class PreliminaryCheckService {
   }
 
   async findOne(id: string) {
-    const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
-    const check = await preliminaryCheckClient.findUnique({
+    const check = await this.prisma.preliminaryCheck.findUnique({
       where: { id },
       include: {
         category: true,
@@ -155,9 +158,12 @@ export class PreliminaryCheckService {
     return check;
   }
 
-  async complete(id: string, status: 'APPROVED' | 'REJECTED', userRole?: string) {
-    const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
-    const check = await preliminaryCheckClient.findUnique({
+  async complete(
+    id: string,
+    status: 'APPROVED' | 'REJECTED',
+    userRole?: string,
+  ) {
+    const check = await this.prisma.preliminaryCheck.findUnique({
       where: { id },
     });
 
@@ -165,11 +171,14 @@ export class PreliminaryCheckService {
       throw new NotFoundException('Phieu kiem so bo khong ton tai');
     }
 
-    if (userRole !== 'ADMIN' && check.status !== PreliminaryCheckStatus.PENDING) {
+    if (
+      userRole !== 'ADMIN' &&
+      check.status !== PreliminaryCheckStatus.PENDING
+    ) {
       throw new NotFoundException('Phieu da duoc xu ly truoc do');
     }
 
-    return preliminaryCheckClient.update({
+    return this.prisma.preliminaryCheck.update({
       where: { id },
       data: { status: status as PreliminaryCheckStatus },
       include: {
@@ -183,9 +192,12 @@ export class PreliminaryCheckService {
     });
   }
 
-  async update(id: string, dto: Partial<PreliminaryCheckPayload>, userRole?: string) {
-    const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
-    const existing = await preliminaryCheckClient.findUnique({
+  async update(
+    id: string,
+    dto: Partial<PreliminaryCheckPayload>,
+    userRole?: string,
+  ) {
+    const existing = await this.prisma.preliminaryCheck.findUnique({
       where: { id },
     });
 
@@ -193,24 +205,37 @@ export class PreliminaryCheckService {
       throw new NotFoundException('Phieu kiem so bo khong ton tai');
     }
 
-    if (userRole !== 'ADMIN' && existing.status !== PreliminaryCheckStatus.PENDING) {
-      throw new BadRequestException('Chi co the sua phieu kiem so bo khi dang cho kiem tra chi tiet');
+    if (
+      userRole !== 'ADMIN' &&
+      existing.status !== PreliminaryCheckStatus.PENDING
+    ) {
+      throw new BadRequestException(
+        'Chi co the sua phieu kiem so bo khi dang cho kiem tra chi tiet',
+      );
     }
 
     await this.validateReferenceData({
       categoryId: dto.categoryId ?? existing.categoryId ?? undefined,
-      classificationId: dto.classificationId ?? existing.classificationId ?? undefined,
-      warehouseTypeId: dto.warehouseTypeId === '' ? undefined : dto.warehouseTypeId ?? existing.warehouseTypeId ?? undefined,
+      classificationId:
+        dto.classificationId ?? existing.classificationId ?? undefined,
+      warehouseTypeId:
+        dto.warehouseTypeId === ''
+          ? undefined
+          : (dto.warehouseTypeId ?? existing.warehouseTypeId ?? undefined),
     });
 
-    return preliminaryCheckClient.update({
+    return this.prisma.preliminaryCheck.update({
       where: { id },
       data: {
         categoryId: dto.categoryId,
         classificationId: dto.classificationId,
         quantity: dto.quantity,
-        warehouseTypeId: dto.warehouseTypeId === '' ? null : dto.warehouseTypeId,
-        imageUrl: dto.imageUrl,
+        warehouseTypeId:
+          dto.warehouseTypeId === '' ? null : dto.warehouseTypeId,
+        imageUrl:
+          dto.imageUrls !== undefined
+            ? serializeImageUrls(dto.imageUrls)
+            : undefined,
         note: dto.note,
       },
       include: {
@@ -225,8 +250,7 @@ export class PreliminaryCheckService {
   }
 
   async remove(id: string, userRole?: string) {
-    const preliminaryCheckClient = this.prisma.preliminaryCheck as any;
-    const existing = await preliminaryCheckClient.findUnique({
+    const existing = await this.prisma.preliminaryCheck.findUnique({
       where: { id },
     });
 
@@ -234,13 +258,16 @@ export class PreliminaryCheckService {
       throw new NotFoundException('Phieu kiem so bo khong ton tai');
     }
 
-    if (userRole !== 'ADMIN' && existing.status !== PreliminaryCheckStatus.PENDING) {
-      throw new BadRequestException('Chi co the xoa phieu kiem so bo khi chua duoc xu ly');
+    if (
+      userRole !== 'ADMIN' &&
+      existing.status !== PreliminaryCheckStatus.PENDING
+    ) {
+      throw new BadRequestException(
+        'Chi co the xoa phieu kiem so bo khi chua duoc xu ly',
+      );
     }
 
-    await preliminaryCheckClient.delete({
-      where: { id },
-    });
+    await this.prisma.preliminaryCheck.delete({ where: { id } });
 
     return { success: true };
   }

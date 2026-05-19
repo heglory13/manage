@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { ForbiddenException } from '@nestjs/common';
 import type { Response } from 'express';
 import { Role } from '@prisma/client/index';
@@ -12,11 +22,13 @@ import {
   StockAdjustDto,
   StockInBatchDto,
   StockInDto,
+  StockOutBatchDto,
   StockOutDto,
   InventoryQueryDto,
   InventoryQueryV2Dto,
   TransactionHistoryQueryDto,
   TransactionStatusActionDto,
+  TransferStockDto,
 } from './dto/index.js';
 
 @Controller('inventory')
@@ -29,17 +41,27 @@ export class InventoryController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.inventoryService.stockIn(dto.categoryId, dto.quantity, user.userId, {
-      purchasePrice: dto.purchasePrice,
-      salePrice: dto.salePrice,
-      skuComboId: dto.skuComboId,
-      productConditionId: dto.productConditionId,
-      storageZoneId: dto.storageZoneId,
-      warehousePositionId: dto.warehousePositionId,
-      preliminaryCheckId: dto.preliminaryCheckId,
-      actualStockDate: dto.actualStockDate,
-      notes: dto.notes,
-    });
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen nhap kho');
+    }
+    return this.inventoryService.stockIn(
+      dto.categoryId,
+      dto.quantity,
+      user.userId,
+      {
+        purchasePrice: dto.purchasePrice,
+        salePrice: dto.salePrice,
+        skuComboId: dto.skuComboId,
+        productConditionId: dto.productConditionId,
+        storageZoneId: dto.storageZoneId,
+        warehouseTypeId: dto.warehouseTypeId,
+        warehousePositionId: dto.warehousePositionId,
+        preliminaryCheckId: dto.preliminaryCheckId,
+        actualStockDate: dto.actualStockDate,
+        notes: dto.notes,
+        imageUrls: dto.imageUrls,
+      },
+    );
   }
 
   @Post('stock-in/batch')
@@ -48,6 +70,9 @@ export class InventoryController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen nhap kho');
+    }
     return this.inventoryService.stockInBatch(dto.items, user.userId, {
       preliminaryCheckId: dto.preliminaryCheckId,
     });
@@ -59,6 +84,9 @@ export class InventoryController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen xuat kho');
+    }
     return this.inventoryService.stockOut(
       dto.categoryId,
       dto.quantity,
@@ -73,20 +101,62 @@ export class InventoryController {
     );
   }
 
+  @Post('stock-out/batch')
+  async stockOutBatch(
+    @Body() dto: StockOutBatchDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen xuat kho');
+    }
+    return this.inventoryService.stockOutBatch(dto.items, user.userId);
+  }
+
   @Post('adjust')
   async adjustStock(
     @Body() dto: StockAdjustDto,
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.inventoryService.adjustStock(dto.categoryId, dto.quantity, dto.type, user.userId, {
-      warehousePositionId: dto.warehousePositionId,
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen dieu chinh kho');
+    }
+    return this.inventoryService.adjustStock(
+      dto.categoryId,
+      dto.quantity,
+      dto.type,
+      user.userId,
+      {
+        skuComboId: dto.skuComboId,
+        warehousePositionId: dto.warehousePositionId,
+        storageZoneId: dto.storageZoneId,
+        reason: dto.reason,
+      },
+    );
+  }
+
+  @Post('transfer')
+  async transferStock(
+    @Body() dto: TransferStockDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen dieu chuyen kho');
+    }
+    return this.inventoryService.transferStock({
+      categoryId: dto.categoryId,
+      skuComboId: dto.skuComboId,
+      quantity: dto.quantity,
+      sourcePositionId: dto.sourcePositionId,
+      targetPositionId: dto.targetPositionId,
       reason: dto.reason,
+      userId: user.userId,
     });
   }
 
   @Patch('transactions/status')
-  @Roles(Role.MANAGER, Role.ADMIN)
   async updateTransactionStatus(
     @Body() dto: TransactionStatusActionDto,
     @CurrentUser() currentUser: Record<string, unknown>,
@@ -95,7 +165,10 @@ export class InventoryController {
     if (!hasPermission(user.permissions, 'transactions', 'edit')) {
       throw new ForbiddenException('Ban khong co quyen sua giao dich');
     }
-    return this.inventoryService.updateTransactionStatus(dto.transactionIds, dto.status);
+    return this.inventoryService.updateTransactionStatus(
+      dto.transactionIds,
+      dto.status,
+    );
   }
 
   @Patch('transactions/:id')
@@ -105,7 +178,15 @@ export class InventoryController {
     @CurrentUser() currentUser: Record<string, unknown>,
   ) {
     const user = currentUser as unknown as UserPayload;
-    return this.inventoryService.updateTransaction(id, dto, user.userId, user.role);
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen sua giao dich');
+    }
+    return this.inventoryService.updateTransaction(
+      id,
+      dto,
+      user.userId,
+      user.role,
+    );
   }
 
   @Delete('transactions')
@@ -171,12 +252,28 @@ export class InventoryController {
     });
   }
 
+  @Get('stock-by-zone')
+  async getStockByZone(@Query('skuComboId') skuComboId: string) {
+    if (!skuComboId) {
+      return [];
+    }
+    return this.inventoryService.getStockBySkuComboPerZone(skuComboId);
+  }
+
   @Get('transactions')
   async getTransactionHistory(@Query() query: TransactionHistoryQueryDto) {
     return this.inventoryService.getTransactionHistory({
       kind: query.kind,
-      page: query.page ? parseInt(query.page, 10) : undefined,
-      limit: query.limit ? parseInt(query.limit, 10) : undefined,
+      status: query.status,
+      categoryName: query.categoryName,
+      productName: query.productName,
+      sku: query.sku,
+      positionLabel: query.positionLabel,
+      userName: query.userName,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      page: query.page,
+      limit: query.limit,
     });
   }
 

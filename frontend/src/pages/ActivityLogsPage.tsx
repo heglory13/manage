@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import AppLayout from '../components/layout/AppLayout';
 import { api } from '../services/api';
-import { formatDateTime } from '../lib/utils';
+import { formatDateTime, matchSel } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -83,7 +83,12 @@ export default function ActivityLogsPage() {
       key: 'userName',
       label: 'Người dùng',
       type: 'text',
-      placeholder: 'Lọc người dùng...',
+      placeholder: 'Gõ để tìm người dùng...',
+      asyncLoad: async () => {
+        const res = await api.get('/users');
+        const items = res.data.data || res.data || [];
+        return items.map((u: any) => ({ value: u.name, label: u.name }));
+      },
     },
     {
       key: 'date',
@@ -97,8 +102,8 @@ export default function ActivityLogsPage() {
     if (Object.keys(f).length === 0) return logs;
 
     return logs.filter((log) => {
-      if (f.tableName && log.tableName !== f.tableName) return false;
-      if (f.action && log.action !== f.action) return false;
+      if (!matchSel(f.tableName, log.tableName)) return false;
+      if (!matchSel(f.action, log.action)) return false;
       if (f.userName && !log.userName?.toLowerCase().includes(String(f.userName).toLowerCase())) return false;
       if (f.date) {
         const logDate = new Date(log.createdAt).toISOString().slice(0, 10);
@@ -233,11 +238,14 @@ export default function ActivityLogsPage() {
       <SmartFilter
         fields={filterFields}
         filters={savedFilterHook.filters}
+          draftFilters={savedFilterHook.draftFilters}
         savedFilters={savedFilterHook.savedFilters}
         activeFilterId={savedFilterHook.activeFilterId}
+          hasPendingChanges={savedFilterHook.hasPendingChanges}
         onUpdateFilter={savedFilterHook.updateFilter}
         onRemoveFilter={savedFilterHook.removeFilter}
         onClearFilters={savedFilterHook.clearFilters}
+          onApplyDraftFilters={savedFilterHook.applyDraftFilters}
         onApplyFilter={savedFilterHook.applyFilter}
         onSaveFilter={savedFilterHook.saveFilter}
         onDeleteFilter={savedFilterHook.deleteFilter}
@@ -333,7 +341,7 @@ export default function ActivityLogsPage() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -350,7 +358,7 @@ export default function ActivityLogsPage() {
                     {filteredLogs.map((log, idx) => (
                       <TableRow key={log.id}>
                         <TableCell>{(page - 1) * pageSize + idx + 1}</TableCell>
-                        <TableCell className="text-xs whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
+                        <TableCell className="text-xs md:whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
                         <TableCell className="font-medium">{log.userName || '-'}</TableCell>
                         <TableCell>
                           <span className={`px-2 py-1 rounded text-xs font-medium ${getActionBadgeClass(log.action)}`}>
@@ -379,6 +387,32 @@ export default function ActivityLogsPage() {
                     )}
                   </TableBody>
                 </Table>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="md:hidden divide-y divide-slate-100">
+                {filteredLogs.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-slate-400">Không có nhật ký nào</div>
+                ) : filteredLogs.map((log, idx) => (
+                  <div key={log.id} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-xs text-slate-400">{(page - 1) * pageSize + idx + 1}.</span>
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getActionBadgeClass(log.action)}`}>
+                            {getActionLabel(log.action)}
+                          </span>
+                          <span className="text-xs text-slate-500">{getTableLabel(log.tableName)}</span>
+                        </div>
+                        <div className="font-medium text-sm text-slate-900">{log.userName || '-'}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">{formatDateTime(log.createdAt)}</div>
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setSelectedLog(log)}>
+                        <Eye className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
 
               {/* Pagination */}
@@ -420,7 +454,7 @@ export default function ActivityLogsPage() {
           </DialogHeader>
           {selectedLog && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <Label className="text-muted-foreground">Người thực hiện</Label>
                   <p className="font-medium">{selectedLog.userName || '-'}</p>

@@ -47,7 +47,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 
-function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
+function ProtectedRoute({ children, roles, permission }: { children: React.ReactNode; roles?: string[]; permission?: string }) {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
@@ -76,6 +76,26 @@ function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?
     return <Navigate to="/" replace />;
   }
 
+  // Check granular permission (view) for the module
+  if (permission && user.permissions) {
+    const modulePerms = user.permissions[permission];
+    if (modulePerms && modulePerms.view === false) {
+      // Find first accessible route to redirect to (avoid redirect loop)
+      const fallbackRoutes = [
+        { path: '/transactions', perm: 'transactions' },
+        { path: '/inventory', perm: 'inventory' },
+        { path: '/preliminary-checks', perm: 'preliminaryChecks' },
+        { path: '/warehouse', perm: 'warehouse' },
+        { path: '/', perm: 'dashboard' },
+      ];
+      const fallback = fallbackRoutes.find((r) => {
+        const p = user.permissions?.[r.perm];
+        return !p || p.view !== false;
+      });
+      return <Navigate to={fallback?.path || '/login'} replace />;
+    }
+  }
+
   return <>{children}</>;
 }
 
@@ -86,20 +106,20 @@ function App() {
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+            <Route path="/" element={<ProtectedRoute permission="dashboard"><DashboardPage /></ProtectedRoute>} />
             <Route path="/products" element={<Navigate to="/transactions" replace />} />
-            <Route path="/preliminary-checks" element={<ProtectedRoute><PreliminaryChecksPage /></ProtectedRoute>} />
-            <Route path="/order-plans" element={<ProtectedRoute><OrderPlansPage /></ProtectedRoute>} />
-            <Route path="/transactions" element={<ProtectedRoute><TransactionsPage /></ProtectedRoute>} />
-            <Route path="/inventory" element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} />
-            <Route path="/barcode-print" element={<ProtectedRoute><BarcodePrintPage /></ProtectedRoute>} />
-            <Route path="/barcode-management" element={<ProtectedRoute><BarcodeMgmtPage /></ProtectedRoute>} />
-            <Route path="/warehouse" element={<ProtectedRoute><WarehousePage /></ProtectedRoute>} />
-            <Route path="/stocktaking" element={<ProtectedRoute><StocktakingPage /></ProtectedRoute>} />
-            <Route path="/input-declarations" element={<ProtectedRoute><InputDeclarationPage /></ProtectedRoute>} />
-            <Route path="/general-settings" element={<ProtectedRoute roles={['ADMIN']}><GeneralSettingsPage /></ProtectedRoute>} />
-            <Route path="/users" element={<ProtectedRoute roles={['ADMIN', 'MANAGER']}><UsersPage /></ProtectedRoute>} />
-            <Route path="/activity-logs" element={<ProtectedRoute roles={['ADMIN', 'MANAGER']}><ActivityLogsPage /></ProtectedRoute>} />
+            <Route path="/preliminary-checks" element={<ProtectedRoute permission="preliminaryChecks"><PreliminaryChecksPage /></ProtectedRoute>} />
+            <Route path="/order-plans" element={<ProtectedRoute permission="orderPlans"><OrderPlansPage /></ProtectedRoute>} />
+            <Route path="/transactions" element={<ProtectedRoute permission="transactions"><TransactionsPage /></ProtectedRoute>} />
+            <Route path="/inventory" element={<ProtectedRoute permission="inventory"><InventoryPage /></ProtectedRoute>} />
+            <Route path="/barcode-print" element={<ProtectedRoute permission="barcodePrint"><BarcodePrintPage /></ProtectedRoute>} />
+            <Route path="/barcode-management" element={<ProtectedRoute permission="barcodePrint"><BarcodeMgmtPage /></ProtectedRoute>} />
+            <Route path="/warehouse" element={<ProtectedRoute permission="warehouse"><WarehousePage /></ProtectedRoute>} />
+            <Route path="/stocktaking" element={<ProtectedRoute permission="audit"><StocktakingPage /></ProtectedRoute>} />
+            <Route path="/input-declarations" element={<ProtectedRoute permission="input"><InputDeclarationPage /></ProtectedRoute>} />
+            <Route path="/general-settings" element={<ProtectedRoute roles={['ADMIN']} permission="generalSettings"><GeneralSettingsPage /></ProtectedRoute>} />
+            <Route path="/users" element={<ProtectedRoute roles={['ADMIN', 'MANAGER']} permission="users"><UsersPage /></ProtectedRoute>} />
+            <Route path="/activity-logs" element={<ProtectedRoute roles={['ADMIN', 'MANAGER']} permission="activityLogs"><ActivityLogsPage /></ProtectedRoute>} />
           </Routes>
         </AuthProvider>
       </ErrorBoundary>

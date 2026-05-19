@@ -8,7 +8,15 @@ import { Prisma } from '@prisma/client/index';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service.js';
 
-export type AttributeType = 'classification' | 'color' | 'size' | 'material' | 'productCondition' | 'storageZone' | 'warehouseType' | 'category';
+export type AttributeType =
+  | 'classification'
+  | 'color'
+  | 'size'
+  | 'material'
+  | 'productCondition'
+  | 'storageZone'
+  | 'warehouseType'
+  | 'category';
 
 const DUPLICATE_MESSAGES: Record<AttributeType, string> = {
   classification: 'Phân loại này đã tồn tại',
@@ -89,7 +97,16 @@ export class InputDeclarationService {
   }
 
   async getAllDeclarations() {
-    const [categories, classifications, colors, sizes, materials, productConditions, warehouseTypes, storageZones] = await Promise.all([
+    const [
+      categories,
+      classifications,
+      colors,
+      sizes,
+      materials,
+      productConditions,
+      warehouseTypes,
+      storageZones,
+    ] = await Promise.all([
       this.prisma.category.findMany({ orderBy: { name: 'asc' } }),
       this.prisma.classification.findMany({ orderBy: { createdAt: 'desc' } }),
       this.prisma.color.findMany({ orderBy: { createdAt: 'desc' } }),
@@ -139,7 +156,10 @@ export class InputDeclarationService {
       .replace(/[^A-Z0-9_]/g, '');
 
     return this.prisma.category.create({
-      data: { name: trimmed, code: code || trimmed.toUpperCase().replace(/\s+/g, '_') },
+      data: {
+        name: trimmed,
+        code: code || trimmed.toUpperCase().replace(/\s+/g, '_'),
+      },
     });
   }
 
@@ -183,19 +203,29 @@ export class InputDeclarationService {
   async getAll(type: AttributeType) {
     switch (type) {
       case 'classification':
-        return this.prisma.classification.findMany({ orderBy: { createdAt: 'desc' } });
+        return this.prisma.classification.findMany({
+          orderBy: { createdAt: 'desc' },
+        });
       case 'color':
         return this.prisma.color.findMany({ orderBy: { createdAt: 'desc' } });
       case 'size':
         return this.prisma.size.findMany({ orderBy: { createdAt: 'desc' } });
       case 'material':
-        return this.prisma.material.findMany({ orderBy: { createdAt: 'desc' } });
+        return this.prisma.material.findMany({
+          orderBy: { createdAt: 'desc' },
+        });
       case 'productCondition':
-        return this.prisma.productCondition.findMany({ orderBy: { createdAt: 'desc' } });
+        return this.prisma.productCondition.findMany({
+          orderBy: { createdAt: 'desc' },
+        });
       case 'storageZone':
-        return this.prisma.storageZone.findMany({ orderBy: { createdAt: 'desc' } });
+        return this.prisma.storageZone.findMany({
+          orderBy: { createdAt: 'desc' },
+        });
       case 'warehouseType':
-        return this.prisma.warehouseType.findMany({ orderBy: { createdAt: 'desc' } });
+        return this.prisma.warehouseType.findMany({
+          orderBy: { createdAt: 'desc' },
+        });
       case 'category':
         return this.prisma.category.findMany({ orderBy: { name: 'asc' } });
     }
@@ -249,7 +279,10 @@ export class InputDeclarationService {
   }
 
   async updateAttribute(
-    type: Extract<AttributeType, 'classification' | 'color' | 'size' | 'material'>,
+    type: Extract<
+      AttributeType,
+      'classification' | 'color' | 'size' | 'material'
+    >,
     id: string,
     name: string,
   ) {
@@ -257,7 +290,9 @@ export class InputDeclarationService {
 
     switch (type) {
       case 'classification': {
-        const record = await this.prisma.classification.findUnique({ where: { id } });
+        const record = await this.prisma.classification.findUnique({
+          where: { id },
+        });
         if (!record) {
           throw new NotFoundException('Phân loại không tồn tại');
         }
@@ -269,7 +304,10 @@ export class InputDeclarationService {
           throw new ConflictException(DUPLICATE_MESSAGES[type]);
         }
 
-        return this.prisma.classification.update({ where: { id }, data: { name: trimmed } });
+        return this.prisma.classification.update({
+          where: { id },
+          data: { name: trimmed },
+        });
       }
       case 'color': {
         const record = await this.prisma.color.findUnique({ where: { id } });
@@ -284,7 +322,10 @@ export class InputDeclarationService {
           throw new ConflictException(DUPLICATE_MESSAGES[type]);
         }
 
-        return this.prisma.color.update({ where: { id }, data: { name: trimmed } });
+        return this.prisma.color.update({
+          where: { id },
+          data: { name: trimmed },
+        });
       }
       case 'size': {
         const record = await this.prisma.size.findUnique({ where: { id } });
@@ -299,7 +340,10 @@ export class InputDeclarationService {
           throw new ConflictException(DUPLICATE_MESSAGES[type]);
         }
 
-        return this.prisma.size.update({ where: { id }, data: { name: trimmed } });
+        return this.prisma.size.update({
+          where: { id },
+          data: { name: trimmed },
+        });
       }
       case 'material': {
         const record = await this.prisma.material.findUnique({ where: { id } });
@@ -314,7 +358,10 @@ export class InputDeclarationService {
           throw new ConflictException(DUPLICATE_MESSAGES[type]);
         }
 
-        return this.prisma.material.update({ where: { id }, data: { name: trimmed } });
+        return this.prisma.material.update({
+          where: { id },
+          data: { name: trimmed },
+        });
       }
     }
   }
@@ -325,7 +372,9 @@ export class InputDeclarationService {
     try {
       switch (type) {
         case 'classification':
-          record = await this.prisma.classification.findUnique({ where: { id } });
+          record = await this.prisma.classification.findUnique({
+            where: { id },
+          });
           if (record) {
             await this.prisma.classification.delete({ where: { id } });
           }
@@ -349,7 +398,9 @@ export class InputDeclarationService {
           }
           break;
         case 'productCondition':
-          record = await this.prisma.productCondition.findUnique({ where: { id } });
+          record = await this.prisma.productCondition.findUnique({
+            where: { id },
+          });
           if (record) {
             await this.prisma.productCondition.delete({ where: { id } });
           }
@@ -361,7 +412,9 @@ export class InputDeclarationService {
           }
           break;
         case 'warehouseType':
-          record = await this.prisma.warehouseType.findUnique({ where: { id } });
+          record = await this.prisma.warehouseType.findUnique({
+            where: { id },
+          });
           if (record) {
             await this.prisma.warehouseType.delete({ where: { id } });
           }
@@ -374,8 +427,13 @@ export class InputDeclarationService {
           break;
       }
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
-        throw new BadRequestException(`${TABLE_MESSAGES[type]} dang duoc su dung o du lieu khac, khong the xoa`);
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          `${TABLE_MESSAGES[type]} dang duoc su dung o du lieu khac, khong the xoa`,
+        );
       }
       throw error;
     }
@@ -412,7 +470,9 @@ export class InputDeclarationService {
 
   async updateProductCondition(id: string, name: string) {
     const trimmed = this.ensureTrimmedName(name);
-    const record = await this.prisma.productCondition.findUnique({ where: { id } });
+    const record = await this.prisma.productCondition.findUnique({
+      where: { id },
+    });
 
     if (!record) {
       throw new NotFoundException('Tình trạng hàng hoá không tồn tại');
@@ -466,7 +526,9 @@ export class InputDeclarationService {
 
   async updateWarehouseType(id: string, name: string) {
     const trimmed = this.ensureTrimmedName(name);
-    const record = await this.prisma.warehouseType.findUnique({ where: { id } });
+    const record = await this.prisma.warehouseType.findUnique({
+      where: { id },
+    });
 
     if (!record) {
       throw new NotFoundException('Loại kho không tồn tại');
@@ -489,7 +551,11 @@ export class InputDeclarationService {
     });
   }
 
-  async createStorageZone(name: string, maxCapacity: number) {
+  async createStorageZone(
+    name: string,
+    maxCapacity: number,
+    warehouseTypeId?: string,
+  ) {
     const trimmed = name.trim();
     if (!trimmed) {
       throw new BadRequestException('Tên không được để trống');
@@ -508,11 +574,20 @@ export class InputDeclarationService {
     }
 
     return this.prisma.storageZone.create({
-      data: { name: trimmed, maxCapacity },
+      data: {
+        name: trimmed,
+        maxCapacity,
+        warehouseTypeId: warehouseTypeId || null,
+      },
     });
   }
 
-  async updateStorageZone(id: string, name: string, maxCapacity: number) {
+  async updateStorageZone(
+    id: string,
+    name: string,
+    maxCapacity: number,
+    warehouseTypeId?: string,
+  ) {
     const trimmed = this.ensureTrimmedName(name);
 
     if (maxCapacity <= 0) {
@@ -525,7 +600,9 @@ export class InputDeclarationService {
     }
 
     if (record.currentStock > maxCapacity) {
-      throw new BadRequestException('Sức chứa mới không được nhỏ hơn tồn hiện tại của khu vực');
+      throw new BadRequestException(
+        'Sức chứa mới không được nhỏ hơn tồn hiện tại của khu vực',
+      );
     }
 
     const existing = await this.prisma.storageZone.findFirst({
@@ -541,7 +618,13 @@ export class InputDeclarationService {
 
     return this.prisma.storageZone.update({
       where: { id },
-      data: { name: trimmed, maxCapacity },
+      data: {
+        name: trimmed,
+        maxCapacity,
+        ...(warehouseTypeId !== undefined && {
+          warehouseTypeId: warehouseTypeId || null,
+        }),
+      },
     });
   }
 
@@ -551,14 +634,34 @@ export class InputDeclarationService {
 
     worksheet.columns = [
       { header: IMPORT_COLUMN_LABELS.category, key: 'category', width: 24 },
-      { header: IMPORT_COLUMN_LABELS.classification, key: 'classification', width: 24 },
+      {
+        header: IMPORT_COLUMN_LABELS.classification,
+        key: 'classification',
+        width: 24,
+      },
       { header: IMPORT_COLUMN_LABELS.color, key: 'color', width: 20 },
       { header: IMPORT_COLUMN_LABELS.size, key: 'size', width: 18 },
       { header: IMPORT_COLUMN_LABELS.material, key: 'material', width: 22 },
-      { header: IMPORT_COLUMN_LABELS.productCondition, key: 'productCondition', width: 24 },
-      { header: IMPORT_COLUMN_LABELS.storageZone, key: 'storageZone', width: 24 },
-      { header: IMPORT_COLUMN_LABELS.storageZoneCapacity, key: 'storageZoneCapacity', width: 18 },
-      { header: IMPORT_COLUMN_LABELS.warehouseType, key: 'warehouseType', width: 20 },
+      {
+        header: IMPORT_COLUMN_LABELS.productCondition,
+        key: 'productCondition',
+        width: 24,
+      },
+      {
+        header: IMPORT_COLUMN_LABELS.storageZone,
+        key: 'storageZone',
+        width: 24,
+      },
+      {
+        header: IMPORT_COLUMN_LABELS.storageZoneCapacity,
+        key: 'storageZoneCapacity',
+        width: 18,
+      },
+      {
+        header: IMPORT_COLUMN_LABELS.warehouseType,
+        key: 'warehouseType',
+        width: 20,
+      },
     ];
 
     const headerRow = worksheet.getRow(1);
@@ -591,7 +694,9 @@ export class InputDeclarationService {
     }
 
     const headerMap = this.extractHeaderMap(worksheet);
-    const missingColumns = IMPORT_COLUMNS.filter((header) => !headerMap.has(this.normalizeHeader(header)));
+    const missingColumns = IMPORT_COLUMNS.filter(
+      (header) => !headerMap.has(this.normalizeHeader(header)),
+    );
 
     if (missingColumns.length > 0) {
       throw new BadRequestException(
@@ -604,27 +709,55 @@ export class InputDeclarationService {
       throw new BadRequestException('File Excel khong co du lieu hop le');
     }
 
-    const [categories, classifications, colors, sizes, materials, productConditions, storageZones, warehouseTypes] = await Promise.all([
+    const [
+      categories,
+      classifications,
+      colors,
+      sizes,
+      materials,
+      productConditions,
+      storageZones,
+      warehouseTypes,
+    ] = await Promise.all([
       this.prisma.category.findMany({ select: { name: true, code: true } }),
       this.prisma.classification.findMany({ select: { name: true } }),
       this.prisma.color.findMany({ select: { name: true } }),
       this.prisma.size.findMany({ select: { name: true } }),
       this.prisma.material.findMany({ select: { name: true } }),
       this.prisma.productCondition.findMany({ select: { name: true } }),
-      this.prisma.storageZone.findMany({ select: { name: true, maxCapacity: true } }),
+      this.prisma.storageZone.findMany({
+        select: { name: true, maxCapacity: true },
+      }),
       this.prisma.warehouseType.findMany({ select: { name: true } }),
     ]);
 
-    const categoryNames = new Set(categories.map((item) => this.normalizeValue(item.name)));
+    const categoryNames = new Set(
+      categories.map((item) => this.normalizeValue(item.name)),
+    );
     const categoryCodes = new Set(categories.map((item) => item.code));
-    const classificationNames = new Set(classifications.map((item) => this.normalizeValue(item.name)));
-    const colorNames = new Set(colors.map((item) => this.normalizeValue(item.name)));
-    const sizeNames = new Set(sizes.map((item) => this.normalizeValue(item.name)));
-    const materialNames = new Set(materials.map((item) => this.normalizeValue(item.name)));
-    const productConditionNames = new Set(productConditions.map((item) => this.normalizeValue(item.name)));
-    const warehouseTypeNames = new Set(warehouseTypes.map((item) => this.normalizeValue(item.name)));
+    const classificationNames = new Set(
+      classifications.map((item) => this.normalizeValue(item.name)),
+    );
+    const colorNames = new Set(
+      colors.map((item) => this.normalizeValue(item.name)),
+    );
+    const sizeNames = new Set(
+      sizes.map((item) => this.normalizeValue(item.name)),
+    );
+    const materialNames = new Set(
+      materials.map((item) => this.normalizeValue(item.name)),
+    );
+    const productConditionNames = new Set(
+      productConditions.map((item) => this.normalizeValue(item.name)),
+    );
+    const warehouseTypeNames = new Set(
+      warehouseTypes.map((item) => this.normalizeValue(item.name)),
+    );
     const storageZoneMap = new Map(
-      storageZones.map((item) => [this.normalizeValue(item.name), item.maxCapacity]),
+      storageZones.map((item) => [
+        this.normalizeValue(item.name),
+        item.maxCapacity,
+      ]),
     );
 
     // --- Phase 1: Validate each row individually ---
@@ -633,16 +766,23 @@ export class InputDeclarationService {
     const errorRowNumbers = new Set<number>();
     const validRows: ImportRow[] = [];
     // Track storage zones to update (existing in DB but Excel has different capacity)
-    const updateStorageZones = new Map<string, { name: string; maxCapacity: number }>();
+    const updateStorageZones = new Map<
+      string,
+      { name: string; maxCapacity: number }
+    >();
 
     for (const row of rows) {
       const rowErrors: ImportError[] = [];
 
-      if (row.storageZone && (row.storageZoneCapacity === null || row.storageZoneCapacity <= 0)) {
+      if (
+        row.storageZone &&
+        (row.storageZoneCapacity === null || row.storageZoneCapacity <= 0)
+      ) {
         rowErrors.push({
           row: row.rowNumber,
           field: IMPORT_COLUMN_LABELS.storageZoneCapacity,
-          message: 'Suc chua khu vuc bat buoc va phai lon hon 0 khi co khu vuc hang hoa',
+          message:
+            'Suc chua khu vuc bat buoc va phai lon hon 0 khi co khu vuc hang hoa',
         });
       }
 
@@ -654,7 +794,11 @@ export class InputDeclarationService {
         });
       }
 
-      if (row.storageZone && row.storageZoneCapacity !== null && row.storageZoneCapacity > 0) {
+      if (
+        row.storageZone &&
+        row.storageZoneCapacity !== null &&
+        row.storageZoneCapacity > 0
+      ) {
         const normalized = this.normalizeValue(row.storageZone);
         const capacity = row.storageZoneCapacity;
 
@@ -677,7 +821,10 @@ export class InputDeclarationService {
     const newSizes = new Map<string, string>();
     const newMaterials = new Map<string, string>();
     const newProductConditions = new Map<string, string>();
-    const newStorageZones = new Map<string, { name: string; maxCapacity: number }>();
+    const newStorageZones = new Map<
+      string,
+      { name: string; maxCapacity: number }
+    >();
     const newWarehouseTypes = new Map<string, string>();
 
     // Track skipped (already existing) counts per type
@@ -707,7 +854,10 @@ export class InputDeclarationService {
         if (!categoryNames.has(normalized) && !newCategories.has(normalized)) {
           const code = this.generateCategoryCode(row.category, categoryCodes);
           newCategories.set(normalized, { name: row.category, code });
-        } else if (categoryNames.has(normalized) && !skippedCategories.has(normalized)) {
+        } else if (
+          categoryNames.has(normalized) &&
+          !skippedCategories.has(normalized)
+        ) {
           skippedCategories.add(normalized);
           skippedCounts.categories++;
         }
@@ -715,9 +865,15 @@ export class InputDeclarationService {
 
       if (row.classification) {
         const normalized = this.normalizeValue(row.classification);
-        if (!classificationNames.has(normalized) && !newClassifications.has(normalized)) {
+        if (
+          !classificationNames.has(normalized) &&
+          !newClassifications.has(normalized)
+        ) {
           newClassifications.set(normalized, row.classification);
-        } else if (classificationNames.has(normalized) && !skippedClassifications.has(normalized)) {
+        } else if (
+          classificationNames.has(normalized) &&
+          !skippedClassifications.has(normalized)
+        ) {
           skippedClassifications.add(normalized);
           skippedCounts.classifications++;
         }
@@ -727,7 +883,10 @@ export class InputDeclarationService {
         const normalized = this.normalizeValue(row.color);
         if (!colorNames.has(normalized) && !newColors.has(normalized)) {
           newColors.set(normalized, row.color);
-        } else if (colorNames.has(normalized) && !skippedColors.has(normalized)) {
+        } else if (
+          colorNames.has(normalized) &&
+          !skippedColors.has(normalized)
+        ) {
           skippedColors.add(normalized);
           skippedCounts.colors++;
         }
@@ -747,7 +906,10 @@ export class InputDeclarationService {
         const normalized = this.normalizeValue(row.material);
         if (!materialNames.has(normalized) && !newMaterials.has(normalized)) {
           newMaterials.set(normalized, row.material);
-        } else if (materialNames.has(normalized) && !skippedMaterials.has(normalized)) {
+        } else if (
+          materialNames.has(normalized) &&
+          !skippedMaterials.has(normalized)
+        ) {
           skippedMaterials.add(normalized);
           skippedCounts.materials++;
         }
@@ -755,9 +917,15 @@ export class InputDeclarationService {
 
       if (row.productCondition) {
         const normalized = this.normalizeValue(row.productCondition);
-        if (!productConditionNames.has(normalized) && !newProductConditions.has(normalized)) {
+        if (
+          !productConditionNames.has(normalized) &&
+          !newProductConditions.has(normalized)
+        ) {
           newProductConditions.set(normalized, row.productCondition);
-        } else if (productConditionNames.has(normalized) && !skippedProductConditions.has(normalized)) {
+        } else if (
+          productConditionNames.has(normalized) &&
+          !skippedProductConditions.has(normalized)
+        ) {
           skippedProductConditions.add(normalized);
           skippedCounts.productConditions++;
         }
@@ -765,7 +933,8 @@ export class InputDeclarationService {
 
       if (row.storageZone) {
         const normalized = this.normalizeValue(row.storageZone);
-        const capacity = fileStorageZoneMap.get(normalized) ?? row.storageZoneCapacity ?? 0;
+        const capacity =
+          fileStorageZoneMap.get(normalized) ?? row.storageZoneCapacity ?? 0;
         const existingCapacity = storageZoneMap.get(normalized);
 
         if (existingCapacity !== undefined) {
@@ -798,9 +967,15 @@ export class InputDeclarationService {
 
       if (row.warehouseType) {
         const normalized = this.normalizeValue(row.warehouseType);
-        if (!warehouseTypeNames.has(normalized) && !newWarehouseTypes.has(normalized)) {
+        if (
+          !warehouseTypeNames.has(normalized) &&
+          !newWarehouseTypes.has(normalized)
+        ) {
           newWarehouseTypes.set(normalized, row.warehouseType);
-        } else if (warehouseTypeNames.has(normalized) && !skippedWarehouseTypes.has(normalized)) {
+        } else if (
+          warehouseTypeNames.has(normalized) &&
+          !skippedWarehouseTypes.has(normalized)
+        ) {
           skippedWarehouseTypes.add(normalized);
           skippedCounts.warehouseTypes++;
         }
@@ -863,7 +1038,8 @@ export class InputDeclarationService {
       partialSuccess: hasErrors && hasImported,
       totalRows: rows.length,
       importedRows: validRows.length,
-      errorRows: errors.length > 0 ? [...errorRowNumbers].sort((a, b) => a - b) : [],
+      errorRows:
+        errors.length > 0 ? [...errorRowNumbers].sort((a, b) => a - b) : [],
       createdCounts: {
         categories: newCategories.size,
         classifications: newClassifications.size,
@@ -903,7 +1079,9 @@ export class InputDeclarationService {
     const getColumnIndex = (label: string) => {
       const columnIndex = headerMap.get(this.normalizeHeader(label));
       if (!columnIndex) {
-        throw new BadRequestException(`File Excel khong hop le. Thieu cot: ${label}`);
+        throw new BadRequestException(
+          `File Excel khong hop le. Thieu cot: ${label}`,
+        );
       }
 
       return columnIndex;
@@ -918,17 +1096,36 @@ export class InputDeclarationService {
 
       const parsedRow: ImportRow = {
         rowNumber,
-        category: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.category)).value),
-        classification: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.classification)).value),
-        color: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.color)).value),
-        size: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.size)).value),
-        material: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.material)).value),
-        productCondition: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.productCondition)).value),
-        storageZone: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.storageZone)).value),
-        storageZoneCapacity: this.parseOptionalNumber(
-          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.storageZoneCapacity)).value,
+        category: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.category)).value,
         ),
-        warehouseType: this.cleanString(row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.warehouseType)).value),
+        classification: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.classification))
+            .value,
+        ),
+        color: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.color)).value,
+        ),
+        size: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.size)).value,
+        ),
+        material: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.material)).value,
+        ),
+        productCondition: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.productCondition))
+            .value,
+        ),
+        storageZone: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.storageZone)).value,
+        ),
+        storageZoneCapacity: this.parseOptionalNumber(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.storageZoneCapacity))
+            .value,
+        ),
+        warehouseType: this.cleanString(
+          row.getCell(getColumnIndex(IMPORT_COLUMN_LABELS.warehouseType)).value,
+        ),
       };
 
       const hasAnyValue = Object.entries(parsedRow)
@@ -947,7 +1144,9 @@ export class InputDeclarationService {
     return this.stringifyCellValue(value).trim();
   }
 
-  private parseOptionalNumber(value: ExcelJS.CellValue | undefined): number | null {
+  private parseOptionalNumber(
+    value: ExcelJS.CellValue | undefined,
+  ): number | null {
     const raw = this.stringifyCellValue(value).trim();
     if (!raw) {
       return null;
@@ -967,7 +1166,11 @@ export class InputDeclarationService {
         return value.text;
       }
 
-      if ('result' in value && value.result !== undefined && value.result !== null) {
+      if (
+        'result' in value &&
+        value.result !== undefined &&
+        value.result !== null
+      ) {
         return String(value.result);
       }
 
@@ -988,12 +1191,13 @@ export class InputDeclarationService {
   }
 
   private generateCategoryCode(name: string, usedCodes: Set<string>): string {
-    const baseCode = name
-      .toUpperCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/\s+/g, '_')
-      .replace(/[^A-Z0-9_]/g, '') || 'CATEGORY';
+    const baseCode =
+      name
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, '_')
+        .replace(/[^A-Z0-9_]/g, '') || 'CATEGORY';
 
     let candidate = baseCode;
     let suffix = 1;

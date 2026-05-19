@@ -90,31 +90,42 @@ describe('SkuComboService', () => {
           fc.uuid(),
           async (classificationId, colorId, sizeId, materialId) => {
             // Setup: all FKs exist
-            (prisma.classification as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            (
+              prisma.classification as Record<string, jest.Mock>
+            ).findUnique.mockResolvedValue({
               id: classificationId,
               name: 'TestClassification',
             });
-            (prisma.color as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            (
+              prisma.color as Record<string, jest.Mock>
+            ).findUnique.mockResolvedValue({
               id: colorId,
               name: 'TestColor',
             });
-            (prisma.size as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            (
+              prisma.size as Record<string, jest.Mock>
+            ).findUnique.mockResolvedValue({
               id: sizeId,
               name: 'TestSize',
             });
-            (prisma.material as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            (
+              prisma.material as Record<string, jest.Mock>
+            ).findUnique.mockResolvedValue({
               id: materialId,
               name: 'TestMaterial',
             });
 
             // Combo already exists
-            (prisma.skuCombo as Record<string, jest.Mock>).findUnique.mockResolvedValue({
+            (
+              prisma.skuCombo as Record<string, jest.Mock>
+            ).findUnique.mockResolvedValue({
               id: 'existing-id',
               classificationId,
               colorId,
               sizeId,
               materialId,
-              compositeSku: 'TestClassification-TestColor-TestSize-TestMaterial',
+              compositeSku:
+                'TestClassification-TestColor-TestSize-TestMaterial',
             });
 
             await expect(
@@ -141,8 +152,12 @@ describe('SkuComboService', () => {
         fc.asyncProperty(
           fc.string({ minLength: 1 }).filter((s) => s.trim().length > 0),
           async (searchTerm) => {
-            (prisma.skuCombo as Record<string, jest.Mock>).findMany.mockResolvedValue([]);
-            (prisma.skuCombo as Record<string, jest.Mock>).count.mockResolvedValue(0);
+            (
+              prisma.skuCombo as Record<string, jest.Mock>
+            ).findMany.mockResolvedValue([]);
+            (
+              prisma.skuCombo as Record<string, jest.Mock>
+            ).count.mockResolvedValue(0);
 
             const result = await service.getAll({ search: searchTerm });
 
@@ -150,7 +165,8 @@ describe('SkuComboService', () => {
             expect(result.data).toEqual([]);
 
             // Verify the search was passed to Prisma with OR conditions
-            const findManyCall = (prisma.skuCombo as Record<string, jest.Mock>).findMany.mock.calls[0][0];
+            const findManyCall = (prisma.skuCombo as Record<string, jest.Mock>)
+              .findMany.mock.calls[0][0];
             expect(findManyCall.where.OR).toBeDefined();
             expect(findManyCall.where.OR.length).toBe(5); // compositeSku, classification, color, size, material
           },
