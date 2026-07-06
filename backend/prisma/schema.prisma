@@ -1,0 +1,512 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum TransactionType {
+  STOCK_IN
+  STOCK_OUT
+}
+
+enum InventoryTransactionStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum StocktakingStatus {
+  CHECKING   // Đang kiểm kê
+  PENDING    // Chờ duyệt
+  APPROVED   // Đã duyệt
+  REJECTED   // Từ chối
+}
+
+enum PreliminaryCheckStatus {
+  PENDING     // Chờ duyệt
+  APPROVED    // Đã duyệt
+  REJECTED    // Từ chối
+}
+
+enum OrderPlanType {
+  STOCK
+  PREORDER
+}
+
+enum OrderPlanStatus {
+  PLANNED
+  ORDERED
+}
+
+enum BarcodePrintStatus {
+  PENDING    // Chờ duyệt
+  APPROVED   // Đã duyệt, cho phép in
+  PRINTED    // Đã in
+  REJECTED   // Từ chối
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String   // bcrypt hashed
+  name         String
+  role         Role     @default(STAFF)
+  permissions  Json?
+  refreshToken String?  // hashed refresh token
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  transactions       InventoryTransaction[]
+  stocktakingRecords StocktakingRecord[]
+  preliminaryChecks  PreliminaryCheck[]
+  orderPlans         OrderPlan[]
+  savedFilters       SavedFilter[]
+  barcodePrintLogs      BarcodePrintLog[]
+  customLabelTemplates  CustomLabelTemplate[]
+
+  @@map("users")
+}
+
+model Category {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  code     String    @unique // Mã viết hoa không dấu (DONGHO, DIENTHOAI, ...)
+  products               Product[]
+  inventoryTransactions  InventoryTransaction[]
+  preliminaryChecks      PreliminaryCheck[]
+  stocktakingItems       StocktakingItem[]
+  orderPlans             OrderPlan[]
+
+  @@map("categories")
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  name           String
+  sku            String   @unique
+  price          Decimal  @db.Decimal(15, 2)
+  categoryId     String
+  stock          Int      @default(0) // Tồn kho hiện tại
+  minThreshold   Int      @default(0) // Ngưỡng tồn kho tối thiểu
+  maxThreshold   Int      @default(0) // Ngưỡng tồn kho tối đa
+  isDiscontinued Boolean  @default(false) // Ngừng kinh doanh
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  category           Category              @relation(fields: [categoryId], references: [id])
+  transactions       InventoryTransaction[]
+  warehousePositions WarehousePosition[]
+  stocktakingItems   StocktakingItem[]
+
+  @@map("products")
+}
+
+model InventoryTransaction {
+  id                   String          @id @default(uuid())
+  productId            String?
+  categoryId           String?
+  type                 TransactionType
+  quantity             Int
+  purchasePrice        Decimal?        @db.Decimal(15, 2)
+  salePrice            Decimal?        @db.Decimal(15, 2)
+  status               InventoryTransactionStatus @default(ACTIVE)
+  userId               String
+  skuComboId           String?
+  productConditionId   String?
+  storageZoneId        String?
+  warehouseTypeId      String?
+  actualStockDate      DateTime?       // Thời gian nhập kho thực tế
+  warehousePositionId  String?         // Vị trí kho cụ thể
+  preliminaryCheckId   String?         // Liên kết phiếu kiểm sơ bộ
+  notes                String?
+  imageUrls            String?         @db.Text
+  createdAt            DateTime        @default(now())
+
+  product            Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
+  category           Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  user               User               @relation(fields: [userId], references: [id])
+  skuCombo           SkuCombo?          @relation(fields: [skuComboId], references: [id], onDelete: SetNull)
+  productCondition   ProductCondition?  @relation(fields: [productConditionId], references: [id], onDelete: SetNull)
+  storageZone        StorageZone?       @relation(fields: [storageZoneId], references: [id], onDelete: SetNull)
+  warehouseType      WarehouseType?     @relation(fields: [warehouseTypeId], references: [id], onDelete: SetNull)
+  warehousePosition  WarehousePosition? @relation(fields: [warehousePositionId], references: [id], onDelete: SetNull)
+  preliminaryCheck   PreliminaryCheck?  @relation(fields: [preliminaryCheckId], references: [id], onDelete: SetNull)
+
+  @@index([productId, createdAt])
+  @@index([categoryId, createdAt])
+  @@index([categoryId, status])
+  @@index([skuComboId, status])
+  @@index([storageZoneId, status])
+  @@index([type, createdAt])
+  @@index([status, createdAt])
+  @@map("inventory_transactions")
+}
+
+model WarehouseLayout {
+  id        String   @id @default(uuid())
+  name      String
+  rows      Int      // Số hàng trong grid
+  columns   Int      // Số cột trong grid
+  layoutMode String  @default("GRID") // GRID | FREE
+  canvasWidth Int    @default(1200)
+  canvasHeight Int   @default(700)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  positions WarehousePosition[]
+
+  @@map("warehouse_layouts")
+}
+
+model WarehousePosition {
+  id                String   @id @default(uuid())
+  layoutId          String
+  row               Int
+  column            Int
+  x                 Int      @default(0)
+  y                 Int      @default(0)
+  width             Int      @default(100)
+  height            Int      @default(80)
+  label             String?  // Nhãn vị trí (A1, B2, ...)
+  productId         String?
+  isActive          Boolean  @default(true)  // Ô hoạt động hay ô trống
+  isStorageLocation Boolean  @default(true)  // Có dùng để chứa hàng không (false = trang trí: bàn, cửa, tường, ...)
+  maxCapacity       Int?                      // Sức chứa tối đa (null = không giới hạn)
+  currentStock      Int      @default(0)      // Tồn kho hiện tại tại vị trí
+  skus              Json?                     // Danh sách SKU lưu dưới dạng JSON array
+
+  layout                WarehouseLayout      @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+  product               Product?             @relation(fields: [productId], references: [id])
+  inventoryTransactions InventoryTransaction[]
+
+  @@unique([layoutId, label])
+  @@map("warehouse_positions")
+}
+
+model WarehouseConfig {
+  id          String @id @default(uuid())
+  maxCapacity Int    // Sức chứa tối đa
+
+  @@map("warehouse_config")
+}
+
+model StocktakingRecord {
+  id        String            @id @default(uuid())
+  status    StocktakingStatus @default(CHECKING)
+  createdBy String
+  cutoffTime DateTime         @default(now()) // Thời gian cut-off
+  submittedAt DateTime?                        // Thời gian submit
+  mode       String           @default("full") // 'full' | 'selected'
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  creator       User                       @relation(fields: [createdBy], references: [id])
+  items         StocktakingItem[]
+  statusHistory StocktakingStatusHistory[]
+
+  @@map("stocktaking_records")
+}
+
+model StocktakingItem {
+  id                String    @id @default(uuid())
+  recordId          String
+  productId         String?
+  categoryId        String?
+  itemCode          String
+  itemLabel         String
+  systemQuantity    Int       // Số lượng trên hệ thống
+  actualQuantity    Int       // Số lượng thực tế
+  discrepancy       Int       // = actualQuantity - systemQuantity
+  evidenceUrl       String?   // URL ảnh/file minh chứng
+  discrepancyReason String?   // Nguyên nhân chênh lệch
+  isBalanced        Boolean   @default(false)
+  balancedAt        DateTime?
+
+  record  StocktakingRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  product Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  category Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([productId])
+  @@index([categoryId])
+
+  @@map("stocktaking_items")
+}
+
+model StocktakingStatusHistory {
+  id        String            @id @default(uuid())
+  recordId  String
+  status    StocktakingStatus
+  changedBy String?
+  changedAt DateTime          @default(now())
+  note      String?
+
+  record StocktakingRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@map("stocktaking_status_history")
+}
+
+model WarehouseType {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  preliminaryChecks     PreliminaryCheck[]
+  orderPlans            OrderPlan[]
+  storageZones          StorageZone[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@map("warehouse_types")
+}
+
+model PreliminaryCheck {
+  id               String                 @id @default(uuid())
+  categoryId       String?
+  classificationId String?
+  quantity         Int
+  warehouseTypeId  String?
+  imageUrl         String?
+  note             String?
+  status           PreliminaryCheckStatus @default(PENDING)
+  createdBy        String
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  category              Category?               @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  classification        Classification?         @relation(fields: [classificationId], references: [id], onDelete: SetNull)
+  warehouseType         WarehouseType?          @relation(fields: [warehouseTypeId], references: [id], onDelete: SetNull)
+  creator               User                   @relation(fields: [createdBy], references: [id])
+  inventoryTransactions InventoryTransaction[]
+
+  @@map("preliminary_checks")
+}
+
+model OrderPlan {
+  id                  String          @id @default(uuid())
+  type                OrderPlanType
+  status              OrderPlanStatus @default(PLANNED)
+  categoryId          String?
+  warehouseTypeId     String?
+  quantity            Int
+  customerName        String?
+  customerPhone       String?
+  expectedArrivalDate DateTime?
+  note                String?
+  createdBy           String
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  category      Category?      @relation(fields: [categoryId], references: [id])
+  warehouseType WarehouseType? @relation(fields: [warehouseTypeId], references: [id])
+  creator       User           @relation(fields: [createdBy], references: [id])
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([type])
+  @@map("order_plans")
+}
+
+
+// === Thuộc tính sản phẩm ===
+
+model Classification {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  skuCombos         SkuCombo[]
+  preliminaryChecks PreliminaryCheck[]
+
+  @@map("classifications")
+}
+
+model Color {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  skuCombos SkuCombo[]
+
+  @@map("colors")
+}
+
+model Size {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  skuCombos SkuCombo[]
+
+  @@map("sizes")
+}
+
+model Material {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  skuCombos SkuCombo[]
+
+  @@map("materials")
+}
+
+// === SKU tổng hợp ===
+
+model SkuCombo {
+  id               String   @id @default(uuid())
+  classificationId String
+  colorId          String
+  sizeId           String
+  materialId       String
+  compositeSku     String   @unique
+  minThreshold     Int      @default(0)
+  maxThreshold     Int      @default(0)
+  isDiscontinued   Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  classification       Classification        @relation(fields: [classificationId], references: [id])
+  color                Color                 @relation(fields: [colorId], references: [id])
+  size                 Size                  @relation(fields: [sizeId], references: [id])
+  material             Material              @relation(fields: [materialId], references: [id])
+  inventoryTransactions InventoryTransaction[]
+  barcodePrintLogs     BarcodePrintLog[]
+
+  @@unique([classificationId, colorId, sizeId, materialId])
+  @@map("sku_combos")
+}
+
+// === Tình trạng hàng hoá ===
+
+model ProductCondition {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  inventoryTransactions InventoryTransaction[]
+
+  @@map("product_conditions")
+}
+
+// === Khu vực hàng hoá ===
+
+model StorageZone {
+  id              String        @id @default(uuid())
+  name            String        @unique
+  maxCapacity     Int
+  currentStock    Int           @default(0)
+  warehouseTypeId String?
+  createdAt       DateTime      @default(now())
+
+  warehouseType         WarehouseType?         @relation(fields: [warehouseTypeId], references: [id], onDelete: SetNull)
+  inventoryTransactions InventoryTransaction[]
+
+  @@map("storage_zones")
+}
+
+// === Bộ lọc đã lưu ===
+
+model SavedFilter {
+  id        String   @id @default(uuid())
+  userId    String
+  pageKey   String
+  name      String
+  filters   Json
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageKey, name])
+  @@index([userId, pageKey])
+  @@map("saved_filters")
+}
+
+// === Nhật ký hoạt động ===
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  userName  String
+  action    String
+  tableName String
+  recordId  String
+  oldData   Json?
+  newData   Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([tableName])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+// === Phiếu in tem mã vạch ===
+
+model BarcodePrintLog {
+  id           String              @id @default(uuid())
+  userId       String
+  userName     String
+  skuComboId   String?
+  productName  String
+  sku          String
+  salePrice    Decimal             @db.Decimal(15, 2)
+  quantity     Int
+  status       BarcodePrintStatus  @default(PENDING)
+  paperSize    String?             // e.g. "74x22", "40x30"
+  approvedBy   String?
+  approvedAt   DateTime?
+  printedAt    DateTime?
+  rejectedAt   DateTime?
+  rejectReason String?
+  createdAt    DateTime            @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skuCombo SkuCombo? @relation(fields: [skuComboId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("barcode_print_logs")
+}
+
+model CustomLabelTemplate {
+  id              String   @id @default(uuid())
+  name            String   // tên gợi nhớ của template
+  client          String?
+  product         String?
+  size            String?
+  material        String?
+  origin          String?
+  website         String?
+  slogan          String?
+  paperSize       String?
+  logoImageData   String?  @db.MediumText  // base64
+  extraImageData  String?  @db.MediumText  // base64
+  footerImageData String?  @db.MediumText  // base64
+  logoLine1           String?  // Brand name line 1, e.g., "HAVIAS"
+  logoLine2           String?  // Tagline line 2, e.g., "Factory" — optional
+  logoFontFamily      String?  // Font family for line 1
+  logoLine2FontFamily String?  // Font family for line 2 (can differ from line 1)
+  logoLine1Weight     Int?     // CSS font-weight: 400 | 700 | 900
+  logoLine2Weight     Int?     // CSS font-weight: 300 | 400 | 700
+  sloganWeight        Int?     // Slogan font-weight in footer: 400 | 700 | 900
+  websiteFontFamily   String?  // Font family for website in footer
+  websiteWeight       Int?     // CSS font-weight for website: 400 | 700 | 900
+  sloganFontFamily    String?  // Font family for slogan in footer
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([createdBy])
+  @@index([createdAt])
+  @@map("custom_label_templates")
+}

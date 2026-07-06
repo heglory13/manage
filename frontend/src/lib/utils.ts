@@ -1,0 +1,86 @@
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+export function formatDate(date: string | Date): string {
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }).format(new Date(date));
+}
+
+export function formatDateTime(date: string | Date): string {
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }).format(new Date(date));
+}
+
+export function formatNumber(num: number): string {
+  return new Intl.NumberFormat('vi-VN').format(num);
+}
+
+export function getStatusColor(status: string): string {
+  const colors: Record<string, string> = {
+    DRAFT: 'bg-gray-100 text-gray-800',
+    SUBMITTED: 'bg-yellow-100 text-yellow-800',
+    APPROVED: 'bg-green-100 text-green-800',
+    REJECTED: 'bg-red-100 text-red-800',
+    ACTIVE: 'bg-green-100 text-green-800',
+    INACTIVE: 'bg-gray-100 text-gray-800',
+  };
+  return colors[status] || 'bg-gray-100 text-gray-800';
+}
+
+export function getStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    DRAFT: 'Nháp',
+    SUBMITTED: 'Đã gửi',
+    APPROVED: 'Đã duyệt',
+    REJECTED: 'Từ chối',
+    ACTIVE: 'Hoạt động',
+    INACTIVE: 'Không hoạt động',
+  };
+  return labels[status] || status;
+}
+
+/** Kiểm tra 1 giá trị có khớp bộ lọc multi-select không (hỗ trợ string hoặc string[]) */
+export function matchSel(filterVal: unknown, itemVal: unknown): boolean {
+  if (!filterVal || (Array.isArray(filterVal) && (filterVal as unknown[]).length === 0)) return true;
+  if (Array.isArray(filterVal)) return (filterVal as string[]).includes(String(itemVal ?? ''));
+  return String(itemVal ?? '') === String(filterVal);
+}
+
+/** Kiểm tra 1 mảng giá trị (vd: storageZoneNames) có khớp bộ lọc multi-select không */
+export function matchSelArr(filterVal: unknown, itemVals: string[]): boolean {
+  if (!filterVal || (Array.isArray(filterVal) && (filterVal as unknown[]).length === 0)) return true;
+  const arr = Array.isArray(filterVal) ? (filterVal as string[]) : [String(filterVal)];
+  return itemVals.some((v) => arr.includes(v));
+}
+
+/** Chuyển đổi giá trị SmartFilter (có thể là mảng) thành string để gửi API */
+export function sf(val: unknown): string | undefined {
+  if (Array.isArray(val)) return val.join(',');
+  if (typeof val === 'string' && val) return val;
+  return undefined;
+}
+
+export function debounce<T extends (...args: unknown[]) => unknown>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}

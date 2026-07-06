@@ -1,0 +1,329 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
+import type { Response } from 'express';
+import { Role } from '@prisma/client/index';
+import { Roles } from '../auth/decorators/index.js';
+import { CurrentUser } from '../auth/decorators/index.js';
+import type { UserPayload } from '../auth/interfaces/index.js';
+import { hasPermission } from '../auth/permissions.js';
+import { InventoryService } from './inventory.service.js';
+import {
+  DeleteTransactionsDto,
+  StockAdjustDto,
+  StockInBatchDto,
+  StockInDto,
+  StockOutBatchDto,
+  StockOutDto,
+  InventoryQueryDto,
+  InventoryQueryV2Dto,
+  TransactionHistoryQueryDto,
+  TransactionStatusActionDto,
+  TransferStockDto,
+} from './dto/index.js';
+
+@Controller('inventory')
+export class InventoryController {
+  constructor(private readonly inventoryService: InventoryService) {}
+
+  @Post('stock-in')
+  async stockIn(
+    @Body() dto: StockInDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen nhap kho');
+    }
+    return this.inventoryService.stockIn(
+      dto.categoryId,
+      dto.quantity,
+      user.userId,
+      {
+        purchasePrice: dto.purchasePrice,
+        salePrice: dto.salePrice,
+        skuComboId: dto.skuComboId,
+        productConditionId: dto.productConditionId,
+        storageZoneId: dto.storageZoneId,
+        warehouseTypeId: dto.warehouseTypeId,
+        warehousePositionId: dto.warehousePositionId,
+        preliminaryCheckId: dto.preliminaryCheckId,
+        actualStockDate: dto.actualStockDate,
+        notes: dto.notes,
+        imageUrls: dto.imageUrls,
+      },
+    );
+  }
+
+  @Post('stock-in/batch')
+  async stockInBatch(
+    @Body() dto: StockInBatchDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen nhap kho');
+    }
+    return this.inventoryService.stockInBatch(dto.items, user.userId, {
+      preliminaryCheckId: dto.preliminaryCheckId,
+    });
+  }
+
+  @Post('stock-out')
+  async stockOut(
+    @Body() dto: StockOutDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen xuat kho');
+    }
+    return this.inventoryService.stockOut(
+      dto.categoryId,
+      dto.quantity,
+      user.userId,
+      {
+        skuComboId: dto.skuComboId,
+        productConditionId: dto.productConditionId,
+        storageZoneId: dto.storageZoneId,
+        warehousePositionId: dto.warehousePositionId,
+        notes: dto.notes,
+      },
+    );
+  }
+
+  @Post('stock-out/batch')
+  async stockOutBatch(
+    @Body() dto: StockOutBatchDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'create')) {
+      throw new ForbiddenException('Ban khong co quyen xuat kho');
+    }
+    return this.inventoryService.stockOutBatch(dto.items, user.userId);
+  }
+
+  @Post('adjust')
+  async adjustStock(
+    @Body() dto: StockAdjustDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen dieu chinh kho');
+    }
+    return this.inventoryService.adjustStock(
+      dto.categoryId,
+      dto.quantity,
+      dto.type,
+      user.userId,
+      {
+        skuComboId: dto.skuComboId,
+        warehousePositionId: dto.warehousePositionId,
+        storageZoneId: dto.storageZoneId,
+        reason: dto.reason,
+      },
+    );
+  }
+
+  @Post('transfer')
+  async transferStock(
+    @Body() dto: TransferStockDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen dieu chuyen kho');
+    }
+    return this.inventoryService.transferStock({
+      categoryId: dto.categoryId,
+      skuComboId: dto.skuComboId,
+      quantity: dto.quantity,
+      sourcePositionId: dto.sourcePositionId,
+      targetPositionId: dto.targetPositionId,
+      reason: dto.reason,
+      userId: user.userId,
+    });
+  }
+
+  @Patch('transactions/status')
+  async updateTransactionStatus(
+    @Body() dto: TransactionStatusActionDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen sua giao dich');
+    }
+    return this.inventoryService.updateTransactionStatus(
+      dto.transactionIds,
+      dto.status,
+    );
+  }
+
+  @Patch('transactions/:id')
+  async updateTransaction(
+    @Param('id') id: string,
+    @Body() dto: Record<string, unknown>,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'edit')) {
+      throw new ForbiddenException('Ban khong co quyen sua giao dich');
+    }
+    return this.inventoryService.updateTransaction(
+      id,
+      dto,
+      user.userId,
+      user.role,
+    );
+  }
+
+  @Delete('transactions')
+  @Roles(Role.ADMIN)
+  async deleteTransactions(
+    @Body() dto: DeleteTransactionsDto,
+    @CurrentUser() currentUser: Record<string, unknown>,
+  ) {
+    const user = currentUser as unknown as UserPayload;
+    if (!hasPermission(user.permissions, 'transactions', 'delete')) {
+      throw new ForbiddenException('Ban khong co quyen xoa giao dich');
+    }
+    return this.inventoryService.deleteTransactions(dto.transactionIds);
+  }
+
+  @Get()
+  async getInventory(@Query() query: InventoryQueryDto) {
+    return this.inventoryService.getInventory({
+      categoryId: query.categoryId,
+      startDate: query.startDate,
+      endDate: query.endDate,
+      positionId: query.positionId,
+      page: query.page ? parseInt(query.page, 10) : undefined,
+      limit: query.limit ? parseInt(query.limit, 10) : undefined,
+    });
+  }
+
+  @Get('capacity')
+  async getCapacity() {
+    return this.inventoryService.getCapacityRatio();
+  }
+
+  @Get('v2')
+  async getInventoryV2(@Query() query: InventoryQueryV2Dto) {
+    return this.inventoryService.getInventoryV2({
+      categoryId: query.categoryId,
+      businessStatus: query.businessStatus,
+      productConditionId: query.productConditionId,
+      classificationId: query.classificationId,
+      materialId: query.materialId,
+      colorId: query.colorId,
+      sizeId: query.sizeId,
+      storageZoneId: query.storageZoneId,
+      positionId: query.positionId,
+      startDate: query.startDate,
+      endDate: query.endDate,
+      search: query.search,
+      page: query.page ? parseInt(query.page, 10) : undefined,
+      limit: query.limit ? parseInt(query.limit, 10) : undefined,
+    });
+  }
+
+  @Get('by-sku')
+  async getInventoryBySku(
+    @Query('search') search?: string,
+    @Query('productName') productName?: string,
+    @Query('skuComboIds') skuComboIds?: string,
+    @Query('sku') sku?: string,
+    @Query('categoryName') categoryName?: string,
+    @Query('stock') stock?: string,
+    @Query('isDiscontinued') isDiscontinued?: string,
+    @Query('productConditionName') productConditionName?: string,
+    @Query('storageZone') storageZone?: string,
+    @Query('warehouseType') warehouseType?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.inventoryService.getInventoryBySku({
+      search,
+      productName,
+      skuComboIds,
+      sku,
+      categoryName,
+      stock,
+      isDiscontinued,
+      productConditionName,
+      storageZone,
+      warehouseType,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
+  @Get('stock-by-zone')
+  async getStockByZone(@Query('skuComboId') skuComboId: string) {
+    if (!skuComboId) {
+      return [];
+    }
+    return this.inventoryService.getStockBySkuComboPerZone(skuComboId);
+  }
+
+  @Get('transactions')
+  async getTransactionHistory(@Query() query: TransactionHistoryQueryDto) {
+    return this.inventoryService.getTransactionHistory({
+      kind: query.kind,
+      status: query.status,
+      categoryName: query.categoryName,
+      productName: query.productName,
+      skuComboIds: query.skuComboIds,
+      sku: query.sku,
+      receiptCode: query.receiptCode,
+      positionLabel: query.positionLabel,
+      warehouseInfo: query.warehouseInfo,
+      userName: query.userName,
+      purchasePrice: query.purchasePrice,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      page: query.page,
+      limit: query.limit,
+    });
+  }
+
+  @Get('export-v2')
+  @Roles(Role.MANAGER, Role.ADMIN)
+  async exportExcelV2(
+    @Query() query: InventoryQueryV2Dto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.inventoryService.exportExcelV2({
+      categoryId: query.categoryId,
+      businessStatus: query.businessStatus,
+      productConditionId: query.productConditionId,
+      classificationId: query.classificationId,
+      materialId: query.materialId,
+      colorId: query.colorId,
+      sizeId: query.sizeId,
+      storageZoneId: query.storageZoneId,
+      search: query.search,
+    });
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="ton-kho-v2-${new Date().toISOString().slice(0, 10)}.xlsx"`,
+      'Content-Length': buffer.length.toString(),
+    });
+
+    res.end(buffer);
+  }
+}

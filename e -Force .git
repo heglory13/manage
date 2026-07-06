@@ -1,0 +1,27 @@
+[33mcommit 9c5b2075a7b0ea0dd43ae06a5b389042ae18e569[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Lifeboi_13 <duongnphse181794@fpt.edu.vn>
+Date:   Mon Jul 6 14:23:06 2026 +0700
+
+    done code
+
+[33mcommit dfc88122189fb6f67ce949814f1d3460ff722857[m
+Author: Lifeboi_13 <duongnphse181794@fpt.edu.vn>
+Date:   Mon Jul 6 14:22:25 2026 +0700
+
+    done code
+
+[33mcommit d76a8531f9dcf611d27556b454e898e40194bc50[m
+Author: Lifeboi_13 <duongnphse181794@fpt.edu.vn>
+Date:   Tue May 19 15:27:37 2026 +0700
+
+    Fix filter search and inventory product name matching
+    
+    - Add diacritic normalization to SmartFilter search (handles Vietnamese characters properly)
+    - Fix InventoryPage productName filter to use actual inventory composite names instead of asyncLoad from /products
+    - Both filters now search without diacritic issues (e.g., "nuoc" matches "nước", "NƯỚC" matches in any case)
+
+[33mcommit 65aaaf571190774e422e2501c5c47425d0375e61[m
+Author: Lifeboi_13 <duongnphse181794@fpt.edu.vn>
+Date:   Mon May 4 19:10:25 2026 +0700
+
+    add

@@ -1,0 +1,1700 @@
+﻿import { useState, useEffect, useCallback, useRef } from 'react';
+import AppLayout from '../components/layout/AppLayout';
+import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
+import { formatDateTime } from '../lib/utils';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import { AlertTriangle, Check, Download, Pencil, Trash2, Upload, X } from 'lucide-react';
+import { TransactionExportDialog } from '../components/inventory/TransactionExportDialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
+import * as XLSX from 'xlsx';
+
+interface DeclarationsData {
+  categories: { id: string; name: string; code?: string; createdAt: string }[];
+  classifications: { id: string; name: string; createdAt: string }[];
+  colors: { id: string; name: string; createdAt: string }[];
+  sizes: { id: string; name: string; createdAt: string }[];
+  materials: { id: string; name: string; createdAt: string }[];
+  productConditions: { id: string; name: string; createdAt: string }[];
+  warehouseTypes: { id: string; name: string; createdAt: string }[];
+  storageZones: { id: string; name: string; maxCapacity: number; currentStock: number; warehouseTypeId?: string; createdAt: string }[];
+}
+
+interface SkuCombo {
+  id: string;
+  compositeSku: string;
+  classification: { id: string; name: string };
+  color: { id: string; name: string };
+  size: { id: string; name: string };
+  material: { id: string; name: string };
+  createdAt: string;
+}
+
+interface ProductThreshold {
+  id: string;
+  name: string;
+  sku: string;
+  minThreshold: number;
+  maxThreshold: number;
+  stock: number;
+  category?: { name: string };
+}
+
+type ColumnKey = 'categories' | 'classifications' | 'colors' | 'sizes' | 'materials' | 'productConditions' | 'storageZones' | 'warehouseTypes';
+
+const COLUMN_CONFIG: Record<ColumnKey, { header: string; hasCapacity?: boolean }>[] = Object.fromEntries([
+  ['categories', { header: 'Danh mục' }],
+  ['classifications', { header: 'Phân loại' }],
+  ['colors', { header: 'Màu sắc' }],
+  ['sizes', { header: 'Kích thước' }],
+  ['materials', { header: 'Chất liệu' }],
+  ['productConditions', { header: 'Tình trạng' }],
+  ['storageZones', { header: 'Thùng/Khu vực', hasCapacity: true }],
+  ['warehouseTypes', { header: 'Loại kho' }],
+]) as Record<ColumnKey, { header: string; hasCapacity?: boolean }>;
+
+const COLUMN_KEYS: ColumnKey[] = ['categories', 'classifications', 'colors', 'sizes', 'materials', 'productConditions', 'storageZones', 'warehouseTypes'];
+
+const ENDPOINT_MAP: Record<ColumnKey, string> = {
+  categories: '/input-declarations/categories',
+  classifications: '/input-declarations/classifications',
+  colors: '/input-declarations/colors',
+  sizes: '/input-declarations/sizes',
+  materials: '/input-declarations/materials',
+  productConditions: '/input-declarations/product-conditions',
+  storageZones: '/input-declarations/storage-zones',
+  warehouseTypes: '/input-declarations/warehouse-types',
+};
+
+export default function InputDeclarationPage() {
+  const { user } = useAuth();
+  const canCreate = user?.permissions?.input?.create ?? false;
+  const canEdit = user?.permissions?.input?.edit ?? false;
+  const canDelete = user?.permissions?.input?.delete ?? false;
+  const canSave = user?.permissions?.input?.save ?? false;
+
+  const [activeTab, setActiveTab] = useState('declarations');
+  const [declarations, setDeclarations] = useState<DeclarationsData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // New item states per column
+  const [newItems, setNewItems] = useState<Record<ColumnKey, string>>(() => {
+    const init: Record<string, string> = {};
+    COLUMN_KEYS.forEach(k => init[k] = '');
+    init.storageZones = '';
+    return init as Record<ColumnKey, string>;
+  });
+  const [newCapacity, setNewCapacity] = useState<Record<string, string>>({});
+  const [newZoneWarehouseTypeId, setNewZoneWarehouseTypeId] = useState('');
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    success: boolean;
+    partialSuccess?: boolean;
+    totalRows: number;
+    importedRows: number;
+    errorRows?: number[];
+    createdCounts: Record<string, number>;
+    updatedCounts?: Record<string, number>;
+    skippedCounts?: Record<string, number>;
+    errors?: Array<{ row: number; field: string; message: string }>;
+  } | null>(null);
+
+  // SKU Combo states
+  const [skuCombos, setSkuCombos] = useState<SkuCombo[]>([]);
+  const [skuTotal, setSkuTotal] = useState(0);
+  const [skuPage, setSkuPage] = useState(1);
+  const [skuSearch, setSkuSearch] = useState('');
+  const [skuLoading, setSkuLoading] = useState(false);
+  const [skuLimit, setSkuLimit] = useState(20);
+
+  // SKU export dialog
+  const [skuExportOpen, setSkuExportOpen] = useState(false);
+  const [skuExporting, setSkuExporting] = useState(false);
+
+  // Min threshold states
+  const [thresholds, setThresholds] = useState<ProductThreshold[]>([]);
+  const [thresholdTotal, setThresholdTotal] = useState(0);
+  const [thresholdPage, setThresholdPage] = useState(1);
+  const [thresholdSearch, setThresholdSearch] = useState('');
+  const [thresholdLoading, setThresholdLoading] = useState(false);
+  const [thresholdLimit, setThresholdLimit] = useState(20);
+
+  // Threshold export dialog
+  const [thresholdExportOpen, setThresholdExportOpen] = useState(false);
+  const [thresholdExporting, setThresholdExporting] = useState(false);
+
+  // Threshold template export dialog
+  const [thresholdTemplateOpen, setThresholdTemplateOpen] = useState(false);
+  const [thresholdTemplateExporting, setThresholdTemplateExporting] = useState(false);
+
+  // Threshold template import
+  const [thresholdImportOpen, setThresholdImportOpen] = useState(false);
+  const [thresholdImporting, setThresholdImporting] = useState(false);
+  const [thresholdImportResult, setThresholdImportResult] = useState<{
+    updated: number;
+    errors: Array<{ sku: string; message: string }>;
+  } | null>(null);
+  const thresholdImportFileRef = useRef<HTMLInputElement>(null);
+
+  // Editing threshold
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editMinVal, setEditMinVal] = useState('');
+  const [editMaxVal, setEditMaxVal] = useState('');
+  const [editingDeclaration, setEditingDeclaration] = useState<{
+    column: ColumnKey;
+    id: string;
+    name: string;
+    maxCapacity?: string;
+    warehouseTypeId?: string;
+  } | null>(null);
+
+  const [deleteDialog, setDeleteDialog] = useState<{
+    open: boolean;
+    column: ColumnKey;
+    id: string;
+    usages: Array<{
+      table: string;
+      label: string;
+      count: number;
+      records: Array<{ id: string; name: string; detail: string }>;
+    }>;
+    loading: boolean;
+  }>({ open: false, column: 'categories', id: '', usages: [], loading: false });
+
+  const fetchDeclarations = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/input-declarations/all');
+      setDeclarations(res.data);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Không thể tải dữ liệu khai báo');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const fetchSkuCombos = useCallback(async (page = 1, search = '') => {
+    setSkuLoading(true);
+    try {
+      const res = await api.get('/input-declarations/sku-combos', {
+        params: { page, limit: skuLimit, search },
+      });
+      setSkuCombos(res.data.data || []);
+      setSkuTotal(res.data.total || 0);
+      setSkuPage(page);
+    } catch (err) {
+      console.error('Error fetching SKU combos:', err);
+    } finally {
+      setSkuLoading(false);
+    }
+  }, [skuLimit]);
+
+  const fetchThresholds = useCallback(async (page = 1, search = '') => {
+    setThresholdLoading(true);
+    try {
+      const res = await api.get('/inventory/by-sku', {
+        params: { page, limit: thresholdLimit, search },
+      });
+      const data = (res.data.data || []).map((item: any) => ({
+        id: item.skuComboId || item.key || '',
+        name: item.productName || '-',
+        sku: item.sku || '-',
+        stock: item.stock || 0,
+        minThreshold: item.minThreshold || 0,
+        maxThreshold: item.maxThreshold || 0,
+        category: { name: item.categoryName || '-' },
+      }));
+      setThresholds(data);
+      setThresholdTotal(res.data.total || 0);
+      setThresholdPage(page);
+    } catch (err) {
+      console.error('Error fetching thresholds:', err);
+    } finally {
+      setThresholdLoading(false);
+    }
+  }, [thresholdLimit]);
+
+  useEffect(() => {
+    if (activeTab === 'declarations') {
+      fetchDeclarations();
+    } else if (activeTab === 'sku-combos') {
+      fetchSkuCombos(1, skuSearch);
+    } else if (activeTab === 'thresholds') {
+      fetchThresholds(thresholdPage, thresholdSearch);
+    }
+  }, [activeTab, fetchDeclarations, fetchSkuCombos, fetchThresholds]);
+
+  const handleAdd = async (column: ColumnKey) => {
+    const value = newItems[column]?.trim();
+    if (!value) return;
+
+    try {
+      const endpoint = ENDPOINT_MAP[column];
+      let payload: Record<string, unknown> = { name: value };
+
+      // StorageZone requires maxCapacity
+      if (column === 'storageZones') {
+        const capacity = parseInt(newCapacity[column] || '0', 10);
+        if (!capacity || capacity <= 0) {
+          alert('Vui lòng nhập sức chứa hợp lệ (số nguyên > 0)');
+          return;
+        }
+        payload = { name: value, maxCapacity: capacity, warehouseTypeId: newZoneWarehouseTypeId || undefined };
+      }
+
+      await api.post(endpoint, payload);
+
+      // Reset inputs
+      setNewItems(prev => ({ ...prev, [column]: '' }));
+      if (column === 'storageZones') {
+        setNewCapacity(prev => ({ ...prev, storageZones: '' }));
+        setNewZoneWarehouseTypeId('');
+      }
+
+      // Refresh data
+      fetchDeclarations();
+    } catch (err: any) {
+      const msg = err.response?.data?.message || 'Không thể thêm mới';
+      alert(msg);
+    }
+  };
+
+  const handleDelete = async (column: ColumnKey, id: string) => {
+    setDeleteDialog({ open: true, column, id, usages: [], loading: true });
+    try {
+      const res = await api.get(`/input-declarations/${mapColumnToType(column)}/${id}/usages`);
+      const usages = res.data.usages || [];
+      if (usages.length === 0) {
+        setDeleteDialog(prev => ({ ...prev, open: false }));
+        if (confirm('Bạn có chắc muốn xoá mục này?')) {
+          const endpoint = ENDPOINT_MAP[column];
+          await api.delete(`${endpoint}/${id}`);
+          fetchDeclarations();
+        }
+      } else {
+        setDeleteDialog(prev => ({ ...prev, usages, loading: false }));
+      }
+    } catch (err: any) {
+      setDeleteDialog(prev => ({ ...prev, usages: [], loading: false }));
+      const msg = err.response?.data?.message || 'Không thể kiểm tra dữ liệu liên quan';
+      alert(msg);
+    }
+  };
+
+  const handleForceDelete = async () => {
+    if (!deleteDialog.id || !deleteDialog.column) return;
+    if (!confirm('Bạn có chắc muốn xoá mục này cùng tất cả dữ liệu liên quan? Hành động này không thể hoàn tác.')) return;
+
+    try {
+      const endpoint = ENDPOINT_MAP[deleteDialog.column];
+      await api.delete(`${endpoint}/${deleteDialog.id}`, { params: { force: 'true' } });
+      setDeleteDialog(prev => ({ ...prev, open: false }));
+      fetchDeclarations();
+    } catch (err: any) {
+      const msg = err.response?.data?.message || 'Không thể xoá';
+      alert(msg);
+    }
+  };
+
+  const mapColumnToType = (col: ColumnKey): string => {
+    const map: Record<string, string> = {
+      categories: 'category',
+      classifications: 'classification',
+      colors: 'color',
+      sizes: 'size',
+      materials: 'material',
+      productConditions: 'productCondition',
+      storageZones: 'storageZone',
+      warehouseTypes: 'warehouseType',
+    };
+    return map[col];
+  };
+
+  const startEditDeclaration = (column: ColumnKey, item: any) => {
+    setEditingDeclaration({
+      column,
+      id: item.id,
+      name: item.name,
+      maxCapacity: column === 'storageZones' ? String(item.maxCapacity ?? '') : undefined,
+      warehouseTypeId: column === 'storageZones' ? (item.warehouseTypeId || '') : undefined,
+    });
+  };
+
+  const cancelEditDeclaration = () => {
+    setEditingDeclaration(null);
+  };
+
+  const saveDeclarationEdit = async () => {
+    if (!editingDeclaration) return;
+
+    const trimmedName = editingDeclaration.name.trim();
+    if (!trimmedName) {
+      alert('Vui lòng nhập tên hợp lệ');
+      return;
+    }
+
+    try {
+      const endpoint = ENDPOINT_MAP[editingDeclaration.column];
+      let payload: Record<string, unknown> = { name: trimmedName };
+
+      if (editingDeclaration.column === 'storageZones') {
+        const parsedCapacity = parseInt(editingDeclaration.maxCapacity || '0', 10);
+        if (!parsedCapacity || parsedCapacity <= 0) {
+          alert('Vui lòng nhập sức chứa hợp lệ');
+          return;
+        }
+        payload = { name: trimmedName, maxCapacity: parsedCapacity, warehouseTypeId: editingDeclaration.warehouseTypeId || undefined };
+      }
+
+      await api.patch(`${endpoint}/${editingDeclaration.id}`, payload);
+      setEditingDeclaration(null);
+      fetchDeclarations();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Không thể cập nhật thông tin');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, column: ColumnKey) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAdd(column);
+    }
+  };
+
+  const handleDownloadImportTemplate = async () => {
+    try {
+      const res = await api.get('/input-declarations/import-template', {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'input-declarations-template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading import template:', err);
+      alert('Khong the tai file mau');
+    }
+  };
+
+  const handleImportFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0] ?? null;
+    setImportFile(selectedFile);
+    setImportResult(null);
+  };
+
+  const handleImportExcel = async () => {
+    if (!importFile) {
+      alert('Vui long chon file Excel');
+      return;
+    }
+
+    setImportLoading(true);
+    setImportResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', importFile);
+
+      const res = await api.post('/input-declarations/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      setImportResult(res.data);
+
+      if (res.data.success || res.data.partialSuccess) {
+        await fetchDeclarations();
+        setImportFile(null);
+      }
+    } catch (err: any) {
+      const message = err.response?.data?.message || 'Khong the nhap file Excel';
+      setImportResult(null);
+      alert(Array.isArray(message) ? message.join(', ') : message);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  // Threshold editing
+  const startEditThreshold = (item: ProductThreshold) => {
+    setEditingId(item.id);
+    setEditMinVal(String(item.minThreshold));
+    setEditMaxVal(String(item.maxThreshold));
+  };
+
+  const cancelEditThreshold = () => {
+    setEditingId(null);
+    setEditMinVal('');
+    setEditMaxVal('');
+  };
+
+  const saveThreshold = async (id: string) => {
+    const minVal = parseInt(editMinVal, 10);
+    const maxVal = parseInt(editMaxVal, 10);
+
+    if (isNaN(minVal) || minVal < 0) {
+      alert('Ngưỡng Min phải là số không âm');
+      return;
+    }
+    if (isNaN(maxVal) || maxVal < 0) {
+      alert('Ngưỡng Max phải là số không âm');
+      return;
+    }
+    if (maxVal > 0 && minVal > maxVal) {
+      alert('Ngưỡng Min không được lớn hơn Ngưỡng Max');
+      return;
+    }
+
+    try {
+      await api.patch(`/input-declarations/sku-combos/${id}/threshold`, {
+        minThreshold: minVal,
+        maxThreshold: maxVal,
+      });
+      cancelEditThreshold();
+      fetchThresholds(thresholdPage, thresholdSearch);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Không thể cập nhật ngưỡng');
+    }
+  };
+
+  // Export all declarations to Excel with separate sheets
+  const handleExportDeclarations = () => {
+    if (!declarations) return;
+    try {
+      const {
+        categories, classifications, colors, sizes,
+        materials, productConditions, storageZones, warehouseTypes,
+      } = declarations;
+
+      const maxLen = Math.max(
+        categories.length, classifications.length, colors.length,
+        sizes.length, materials.length, productConditions.length,
+        storageZones.length, warehouseTypes.length,
+      );
+
+      const rows: Record<string, string | number>[] = [];
+      for (let i = 0; i < maxLen; i++) {
+        rows.push({
+          'Danh muc': categories[i]?.name ?? '',
+          'Phan loai': classifications[i]?.name ?? '',
+          'Mau sac': colors[i]?.name ?? '',
+          'Kich thuoc': sizes[i]?.name ?? '',
+          'Chat lieu': materials[i]?.name ?? '',
+          'Tinh trang hang hoa': productConditions[i]?.name ?? '',
+          'Khu vuc hang hoa': storageZones[i]?.name ?? '',
+          'Suc chua khu vuc': storageZones[i]?.maxCapacity ?? '',
+          'Loai kho': warehouseTypes[i]?.name ?? '',
+        });
+      }
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Khai bao input');
+      XLSX.writeFile(wb, 'khai-bao-input.xlsx');
+    } catch (err) {
+      console.error('Export declarations error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  // Export SKU combos to Excel
+  const exportAllSkuCombos = async () => {
+    setSkuExporting(true);
+    try {
+      const res = await api.get('/input-declarations/sku-combos', {
+        params: { page: 1, limit: 10000 },
+      });
+      const data = res.data.data || [];
+      if (data.length === 0) { alert('Không có dữ liệu SKU để xuất.'); return; }
+      const exportData = data.map((sku: SkuCombo, idx: number) => ({
+        '#': idx + 1,
+        'Phân loại': sku.classification?.name || '',
+        'Màu sắc': sku.color?.name || '',
+        'Kích thước': sku.size?.name || '',
+        'Chất liệu': sku.material?.name || '',
+        'SKU Tổng hợp': sku.compositeSku,
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'SKU Combos');
+      XLSX.writeFile(wb, 'sku-combos.xlsx');
+    } catch (err) {
+      console.error('Export all SKU error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSkuExporting(false);
+      setSkuExportOpen(false);
+    }
+  };
+
+  const exportFilteredSkuCombos = async () => {
+    setSkuExporting(true);
+    try {
+      const res = await api.get('/input-declarations/sku-combos', {
+        params: { page: 1, limit: 10000, search: skuSearch || undefined },
+      });
+      const data = res.data.data || [];
+      if (data.length === 0) { alert('Không có dữ liệu SKU để xuất.'); return; }
+      const exportData = data.map((sku: SkuCombo, idx: number) => ({
+        '#': idx + 1,
+        'Phân loại': sku.classification?.name || '',
+        'Màu sắc': sku.color?.name || '',
+        'Kích thước': sku.size?.name || '',
+        'Chất liệu': sku.material?.name || '',
+        'SKU Tổng hợp': sku.compositeSku,
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'SKU Combos');
+      XLSX.writeFile(wb, 'sku-combos-theo-bo-loc.xlsx');
+    } catch (err) {
+      console.error('Export filtered SKU error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSkuExporting(false);
+      setSkuExportOpen(false);
+    }
+  };
+
+  // Export Thresholds to Excel
+  const exportAllThresholds = async () => {
+    setThresholdExporting(true);
+    try {
+      const res = await api.get('/inventory/by-sku', {
+        params: { page: 1, limit: 10000 },
+      });
+      const data = (res.data.data || []).map((item: any) => ({
+        id: item.skuComboId || item.key || '',
+        name: item.productName || '-',
+        sku: item.sku || '-',
+        stock: item.stock || 0,
+        minThreshold: item.minThreshold || 0,
+        maxThreshold: item.maxThreshold || 0,
+        category: { name: item.categoryName || '-' },
+      }));
+      if (data.length === 0) { alert('Không có dữ liệu ngưỡng để xuất.'); return; }
+      const exportData = data.map((item: ProductThreshold, idx: number) => ({
+        '#': idx + 1,
+        'Tên sản phẩm': item.name,
+        'SKU': item.sku,
+        'Danh mục': item.category?.name || '-',
+        'Tồn kho': item.stock,
+        'Ngưỡng Min': item.minThreshold,
+        'Ngưỡng Max': item.maxThreshold,
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Nguong ton kho');
+      XLSX.writeFile(wb, 'nguong-ton-kho.xlsx');
+    } catch (err) {
+      console.error('Export all thresholds error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setThresholdExporting(false);
+      setThresholdExportOpen(false);
+    }
+  };
+
+  const exportFilteredThresholds = async () => {
+    setThresholdExporting(true);
+    try {
+      const res = await api.get('/inventory/by-sku', {
+        params: { page: 1, limit: 10000, search: thresholdSearch || undefined },
+      });
+      const data = (res.data.data || []).map((item: any) => ({
+        id: item.skuComboId || item.key || '',
+        name: item.productName || '-',
+        sku: item.sku || '-',
+        stock: item.stock || 0,
+        minThreshold: item.minThreshold || 0,
+        maxThreshold: item.maxThreshold || 0,
+        category: { name: item.categoryName || '-' },
+      }));
+      if (data.length === 0) { alert('Không có dữ liệu ngưỡng để xuất.'); return; }
+      const exportData = data.map((item: ProductThreshold, idx: number) => ({
+        '#': idx + 1,
+        'Tên sản phẩm': item.name,
+        'SKU': item.sku,
+        'Danh mục': item.category?.name || '-',
+        'Tồn kho': item.stock,
+        'Ngưỡng Min': item.minThreshold,
+        'Ngưỡng Max': item.maxThreshold,
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Nguong ton kho');
+      XLSX.writeFile(wb, 'nguong-ton-kho-theo-bo-loc.xlsx');
+    } catch (err) {
+      console.error('Export filtered thresholds error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setThresholdExporting(false);
+      setThresholdExportOpen(false);
+    }
+  };
+
+  // Export Template: chỉ gồm Tên sản phẩm, SKU, Ngưỡng Min, Ngưỡng Max — dùng để nhập liệu hàng loạt
+  const exportThresholdTemplate = async () => {
+    setThresholdTemplateExporting(true);
+    try {
+      const res = await api.get('/inventory/by-sku', {
+        params: { page: 1, limit: 10000 },
+      });
+      const data = (res.data.data || []).map((item: any) => ({
+        id: item.skuComboId || item.key || '',
+        name: item.productName || '-',
+        sku: item.sku || '-',
+        minThreshold: item.minThreshold ?? 0,
+        maxThreshold: item.maxThreshold ?? 0,
+      }));
+      if (data.length === 0) { alert('Không có sản phẩm để tạo template.'); return; }
+
+      const templateData = data.map((item: { id: string; name: string; sku: string; minThreshold: number; maxThreshold: number }, idx: number) => ({
+        '#': idx + 1,
+        'Tên sản phẩm': item.name,
+        'SKU': item.sku,
+        'Ngưỡng Min': item.minThreshold,
+        'Ngưỡng Max': item.maxThreshold,
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(templateData);
+
+      // Đặt độ rộng cột
+      ws['!cols'] = [
+        { wch: 5 },   // #
+        { wch: 40 },  // Tên sản phẩm
+        { wch: 20 },  // SKU
+        { wch: 14 },  // Ngưỡng Min
+        { wch: 14 },  // Ngưỡng Max
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Template Nguong');
+      XLSX.writeFile(wb, `template-nguong-min-max-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (err) {
+      console.error('Export threshold template error:', err);
+      alert('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setThresholdTemplateExporting(false);
+      setThresholdTemplateOpen(false);
+    }
+  };
+
+  // Import Template: đọc file Excel, parse SKU + Ngưỡng Min + Ngưỡng Max, gọi API batch update
+  const importThresholdTemplate = async (file: File) => {
+    setThresholdImporting(true);
+    setThresholdImportResult(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws);
+
+      if (rows.length === 0) {
+        alert('File không có dữ liệu.');
+        return;
+      }
+
+      // Map header aliases — hỗ trợ tên cột tiếng Việt như trong template
+      const items = rows
+        .map((row) => {
+          const sku = String(
+            row['SKU'] ?? row['Sku'] ?? row['sku'] ?? '',
+          ).trim();
+          const minRaw = row['Ngưỡng Min'] ?? row['min'] ?? row['Min'] ?? row['nguong_min'] ?? 0;
+          const maxRaw = row['Ngưỡng Max'] ?? row['max'] ?? row['Max'] ?? row['nguong_max'] ?? 0;
+          return {
+            sku,
+            minThreshold: Number(minRaw),
+            maxThreshold: Number(maxRaw),
+          };
+        })
+        .filter((item) => item.sku !== '');
+
+      if (items.length === 0) {
+        alert('Không tìm thấy dòng hợp lệ nào. Kiểm tra file có cột SKU, Ngưỡng Min, Ngưỡng Max không?');
+        return;
+      }
+
+      const res = await api.patch('/input-declarations/sku-combos/batch-threshold', { items });
+      setThresholdImportResult(res.data);
+
+      // Reload bảng nếu có ít nhất 1 dòng cập nhật thành công
+      if (res.data.updated > 0) {
+        fetchThresholds(thresholdPage, thresholdSearch);
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Lỗi khi nhập file: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setThresholdImporting(false);
+      // Reset file input để có thể chọn lại cùng file
+      if (thresholdImportFileRef.current) thresholdImportFileRef.current.value = '';
+    }
+  };
+
+  const renderDeclarationItem = (colKey: ColumnKey, item: any, hasCapacity?: boolean) => {
+    const isEditing = editingDeclaration?.column === colKey && editingDeclaration?.id === item.id;
+
+    if (isEditing && editingDeclaration) {
+      return (
+        <div key={item.id} className="rounded border border-transparent p-2 text-xs group hover:bg-muted/50">
+          <div className="space-y-2">
+            <Input
+              size="sm"
+              value={editingDeclaration.name}
+              onChange={(e) => setEditingDeclaration((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+              className="h-8 text-xs"
+            />
+            {hasCapacity && (
+              <>
+                <Input
+                  size="sm"
+                  type="number"
+                  min={1}
+                  value={editingDeclaration.maxCapacity || ''}
+                  onChange={(e) => setEditingDeclaration((prev) => (prev ? { ...prev, maxCapacity: e.target.value } : prev))}
+                  className="h-8 text-xs"
+                />
+                <select
+                  value={editingDeclaration.warehouseTypeId || ''}
+                  onChange={(e) => setEditingDeclaration((prev) => (prev ? { ...prev, warehouseTypeId: e.target.value } : prev))}
+                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                >
+                  <option value="">-- Chọn loại kho --</option>
+                  {(declarations?.warehouseTypes || []).map((wt) => (
+                    <option key={wt.id} value={wt.id}>{wt.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
+            <div className="flex items-center justify-end gap-1">
+              <Button size="sm" className="h-7 px-2" onClick={saveDeclarationEdit} disabled={!canSave && !canEdit}>
+                <Check className="h-3.5 w-3.5" />
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 px-2" onClick={cancelEditDeclaration}>
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div key={item.id} className="rounded border border-transparent p-2 text-xs group hover:bg-muted/50">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="truncate font-medium">{item.name}</div>
+            {hasCapacity && (
+              <div className="text-muted-foreground text-[10px]">
+                Suc chua: {item.maxCapacity} | Hien tai: {item.currentStock || 0}
+                {item.warehouseTypeId && ` | ${declarations?.warehouseTypes?.find((wt) => wt.id === item.warehouseTypeId)?.name || ''}`}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100">
+            {canEdit && (
+              <button
+                onClick={() => startEditDeclaration(colKey, item)}
+                className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                title="Sua"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={() => handleDelete(colKey, item.id)}
+                className="rounded p-1 text-red-500 hover:bg-red-50 hover:text-red-700"
+                title="Xoa"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const totalSkuPages = Math.ceil(skuTotal / skuLimit);
+  const totalThresholdPages = Math.ceil(thresholdTotal / thresholdLimit);
+
+  if (isLoading && !declarations) {
+    return (
+      <AppLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="spinner" style={{ borderTopColor: '#0d6efd' }}></div>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  return (
+    <AppLayout>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold">Khai báo Input</h1>
+        <p className="text-muted text-sm">Quản lý các trường thông tin đầu vào cho quy trình nhập/xuất kho</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span>Ngưỡng tồn kho sản phẩm gồm cả Min và Max nằm ở tab `Ngưỡng Min/Max`.</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => setActiveTab('thresholds')}>
+            Mở tab Ngưỡng Min/Max
+          </Button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-md bg-red-50 p-3 text-red-700 text-sm border border-red-200">
+          {error}
+        </div>
+      )}
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="mb-4">
+          <TabsTrigger value="declarations">Khai báo trường</TabsTrigger>
+          <TabsTrigger value="sku-combos">SKU Tổng hợp</TabsTrigger>
+          <TabsTrigger value="thresholds">Ngưỡng tồn kho Min/Max</TabsTrigger>
+        </TabsList>
+
+        {/* TAB 1: Khai báo trường - 8 columns spreadsheet */}
+        <TabsContent value="declarations">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex-1">
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Co the them tung muc hoac import nhanh bang file Excel theo dung mau.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Button variant="outline" size="sm" onClick={handleDownloadImportTemplate}>
+                    Tai file mau
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Label
+                      htmlFor="input-declaration-import"
+                      className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-3 text-sm font-medium"
+                    >
+                      Chon file Excel
+                    </Label>
+                    <input
+                      id="input-declaration-import"
+                      type="file"
+                      accept=".xlsx,.xls"
+                      className="hidden"
+                      onChange={handleImportFileChange}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleImportExcel}
+                      disabled={!importFile || importLoading}
+                    >
+                      {importLoading ? 'Dang import...' : 'Nhap Excel'}
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={handleExportDeclarations}>
+                      <Download size={16} />
+                      Xuất Excel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <CardTitle className="text-base">Khai báo trường thông tin</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                <p className="font-medium">File import bat buoc dung mau</p>
+                <p className="mt-1">
+                  Cac cot can co: Danh muc, Phan loai, Mau sac, Kich thuoc, Chat lieu, Tinh trang hang hoa, Khu vuc hang hoa, Suc chua khu vuc, Loai kho.
+                </p>
+                <p className="mt-1">
+                  Neu co gia tri o cot khu vuc hang hoa thi cot suc chua khu vuc bat buoc phai lon hon 0.
+                </p>
+                <p className="mt-1 font-medium">
+                  Khi sua ten khai bao, cac du lieu dang lien ket se tu dong hien thi theo ten moi. Neu muc da duoc su dung, he thong se chan xoa de tranh mat du lieu cu.
+                </p>
+                {importFile && (
+                  <p className="mt-2 text-blue-950">
+                    File da chon: <span className="font-medium">{importFile.name}</span>
+                  </p>
+                )}
+              </div>
+
+              {importResult && !importResult.success && !importResult.partialSuccess && (
+                <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  <p className="font-medium">File Excel khong hop le - Khong co dong nao duoc nhap</p>
+                  <p className="mt-1">Tong so {importResult.totalRows} dong du lieu, tat ca deu bi loi. Vui long sua file va thu lai.</p>
+                  <div className="mt-2 space-y-1 max-h-80 overflow-y-auto">
+                    {(importResult.errors || []).map((item, index) => (
+                      <p key={`${item.row}-${item.field}-${index}`}>
+                        <span className="font-medium">Dong {item.row}</span> - <span className="font-medium">{item.field}</span>: {item.message}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {importResult?.partialSuccess && (
+                <div className="mb-4 space-y-3">
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                    <p className="font-medium">Da nhap thanh cong {importResult.importedRows}/{importResult.totalRows} dong</p>
+                    <p className="mt-1">
+                      <span className="font-medium">Tao moi:</span> Danh muc {importResult.createdCounts.categories || 0}, Phan loai {importResult.createdCounts.classifications || 0}, Mau sac {importResult.createdCounts.colors || 0}, Kich thuoc {importResult.createdCounts.sizes || 0}, Chat lieu {importResult.createdCounts.materials || 0}, Tinh trang {importResult.createdCounts.productConditions || 0}, Khu vuc {importResult.createdCounts.storageZones || 0}, Loai kho {importResult.createdCounts.warehouseTypes || 0}.
+                    </p>
+                    {importResult.skippedCounts && Object.values(importResult.skippedCounts).some(v => v > 0) && (
+                      <p className="mt-1">
+                        <span className="font-medium">Da ton tai (bo qua):</span> Danh muc {importResult.skippedCounts.categories || 0}, Phan loai {importResult.skippedCounts.classifications || 0}, Mau sac {importResult.skippedCounts.colors || 0}, Kich thuoc {importResult.skippedCounts.sizes || 0}, Chat lieu {importResult.skippedCounts.materials || 0}, Tinh trang {importResult.skippedCounts.productConditions || 0}, Khu vuc {importResult.skippedCounts.storageZones || 0}, Loai kho {importResult.skippedCounts.warehouseTypes || 0}.
+                      </p>
+                    )}
+                    {(importResult.updatedCounts?.storageZones || 0) > 0 && (
+                      <p className="mt-1">
+                        <span className="font-medium">Cap nhat suc chua:</span> {importResult.updatedCounts?.storageZones} khu vuc.
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    <p className="font-medium">Co {(importResult.errors || []).length} loi o {(importResult.errorRows || []).length} dong khong the nhap</p>
+                    <p className="mt-1 text-xs">Cac dong loi: {(importResult.errorRows || []).join(', ')}</p>
+                    <div className="mt-2 space-y-1 max-h-80 overflow-y-auto">
+                      {(importResult.errors || []).map((item, index) => (
+                        <p key={`${item.row}-${item.field}-${index}`}>
+                          <span className="font-medium">Dong {item.row}</span> - <span className="font-medium">{item.field}</span>: {item.message}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {importResult?.success && (
+                <div className="mb-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                  <p className="font-medium">Import Excel thanh cong</p>
+                  <p className="mt-1">Da xu ly {importResult.totalRows} dong du lieu.</p>
+                  <p className="mt-1">
+                    <span className="font-medium">Tao moi:</span> Danh muc {importResult.createdCounts.categories || 0}, Phan loai {importResult.createdCounts.classifications || 0}, Mau sac {importResult.createdCounts.colors || 0}, Kich thuoc {importResult.createdCounts.sizes || 0}, Chat lieu {importResult.createdCounts.materials || 0}, Tinh trang {importResult.createdCounts.productConditions || 0}, Khu vuc {importResult.createdCounts.storageZones || 0}, Loai kho {importResult.createdCounts.warehouseTypes || 0}.
+                  </p>
+                  {importResult.skippedCounts && Object.values(importResult.skippedCounts).some(v => v > 0) && (
+                    <p className="mt-1">
+                      <span className="font-medium">Da ton tai (bo qua):</span> Danh muc {importResult.skippedCounts.categories || 0}, Phan loai {importResult.skippedCounts.classifications || 0}, Mau sac {importResult.skippedCounts.colors || 0}, Kich thuoc {importResult.skippedCounts.sizes || 0}, Chat lieu {importResult.skippedCounts.materials || 0}, Tinh trang {importResult.skippedCounts.productConditions || 0}, Khu vuc {importResult.skippedCounts.storageZones || 0}, Loai kho {importResult.skippedCounts.warehouseTypes || 0}.
+                    </p>
+                  )}
+                  {(importResult.updatedCounts?.storageZones || 0) > 0 && (
+                    <p className="mt-1">
+                      <span className="font-medium">Cap nhat suc chua:</span> {importResult.updatedCounts?.storageZones} khu vuc.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {isLoading ? (
+                <div className="flex items-center justify-center h-48">
+                  <div className="spinner" style={{ borderTopColor: '#0d6efd' }}></div>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <div className="grid gap-3 min-w-[900px]" style={{ gridTemplateColumns: 'repeat(8, 1fr)' }}>
+                    {COLUMN_KEYS.map((colKey) => {
+                      const config = COLUMN_CONFIG[colKey];
+                      const items = (declarations?.[colKey] as any[]) || [];
+                      const hasCapacity = config.hasCapacity;
+
+                      return (
+                        <div key={colKey} className="border rounded-lg p-3 bg-card">
+                          {/* Header */}
+                          <div className="font-semibold text-sm text-center mb-3 pb-2 border-b">
+                            {config.header}
+                          </div>
+
+                          {/* Add form */}
+                          <div className="space-y-2 mb-3">
+                            <Input
+                              size="sm"
+                              placeholder={`Thêm...`}
+                              value={newItems[colKey] || ''}
+                              onChange={(e) => setNewItems(prev => ({ ...prev, [colKey]: e.target.value }))}
+                              onKeyDown={(e) => handleKeyDown(e, colKey)}
+                              className="text-xs h-8"
+                            />
+                            {hasCapacity && (
+                              <>
+                                <Input
+                                  size="sm"
+                                  type="number"
+                                  placeholder="Sức chứa..."
+                                  value={newCapacity[colKey] || ''}
+                                  onChange={(e) => setNewCapacity(prev => ({ ...prev, [colKey]: e.target.value }))}
+                                  onKeyDown={(e) => handleKeyDown(e, colKey)}
+                                  className="text-xs h-8"
+                                  min={1}
+                                />
+                                <select
+                                  value={newZoneWarehouseTypeId}
+                                  onChange={(e) => setNewZoneWarehouseTypeId(e.target.value)}
+                                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                                >
+                                  <option value="">-- Chọn loại kho --</option>
+                                  {(declarations?.warehouseTypes || []).map((wt) => (
+                                    <option key={wt.id} value={wt.id}>{wt.name}</option>
+                                  ))}
+                                </select>
+                              </>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleAdd(colKey)}
+                              disabled={!canCreate || !newItems[colKey]?.trim() || (hasCapacity && !newCapacity[colKey])}
+                              className="w-full text-xs h-8"
+                            >
+                              Thêm
+                            </Button>
+                          </div>
+
+                          {/* Items list */}
+                          <div className="space-y-1 max-h-[400px] overflow-y-auto">
+                            {items.length === 0 ? (
+                              <p className="text-xs text-muted-foreground text-center py-4">Chưa có dữ liệu</p>
+                            ) : (
+                              items.map((item: any) => renderDeclarationItem(colKey, item, hasCapacity))
+                            )}
+                          </div>
+
+                          {/* Count */}
+                          <div className="mt-2 pt-2 border-t text-xs text-muted-foreground text-center">
+                            {items.length} mục
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 2: SKU Tổng hợp */}
+        <TabsContent value="sku-combos">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Danh sách SKU Tổng hợp</CardTitle>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground">Hiển thị</span>
+                    <select
+                      value={skuLimit}
+                      onChange={(e) => { setSkuLimit(Number(e.target.value)); fetchSkuCombos(1, skuSearch); }}
+                      className="h-8 rounded border border-slate-200 px-2 text-xs"
+                    >
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                      <option value={500}>500</option>
+                    </select>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      placeholder="Tìm kiếm SKU..."
+                      value={skuSearch}
+                      onChange={(e) => setSkuSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && fetchSkuCombos(1, skuSearch)}
+                      className="w-48 h-9"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchSkuCombos(1, skuSearch)}
+                  >
+                    Tìm
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setSkuExportOpen(true)}>
+                    <Download className="w-4 h-4 mr-1" />
+                    Xuất Excel
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {skuLoading ? (
+                <div className="flex items-center justify-center h-48">
+                  <div className="spinner" style={{ borderTopColor: '#0d6efd' }}></div>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">STT</TableHead>
+                          <TableHead>Phân loại</TableHead>
+                          <TableHead>Màu sắc</TableHead>
+                          <TableHead>Kích thước</TableHead>
+                          <TableHead>Chất liệu</TableHead>
+                          <TableHead>SKU Tổng hợp</TableHead>
+                          <TableHead className="w-24">Ngày tạo</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {skuCombos.map((sku, idx) => (
+                          <TableRow key={sku.id}>
+                            <TableCell>{(skuPage - 1) * skuLimit + idx + 1}</TableCell>
+                            <TableCell>{sku.classification?.name || '-'}</TableCell>
+                            <TableCell>{sku.color?.name || '-'}</TableCell>
+                            <TableCell>{sku.size?.name || '-'}</TableCell>
+                            <TableCell>{sku.material?.name || '-'}</TableCell>
+                            <TableCell className="font-mono text-xs font-medium">{sku.compositeSku}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {formatDateTime(sku.createdAt)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        {skuCombos.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                              Chưa có SKU tổng hợp nào
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination */}
+                  {skuTotal > 0 && (
+                    <div className="flex items-center justify-between mt-4">
+                      <p className="text-sm text-muted-foreground">
+                        Hiển thị {(skuPage - 1) * skuLimit + 1} - {Math.min(skuPage * skuLimit, skuTotal)} trong tổng {skuTotal} bản ghi
+                      </p>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchSkuCombos(1, skuSearch)}
+                          disabled={skuPage <= 1}
+                        >
+                          Đầu
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchSkuCombos(skuPage - 1, skuSearch)}
+                          disabled={skuPage <= 1}
+                        >
+                          Trước
+                        </Button>
+                        {Array.from({ length: Math.min(7, totalSkuPages) }, (_, i) => {
+                          const start = Math.max(1, Math.min(skuPage - 3, totalSkuPages - 6));
+                          const page = start + i;
+                          if (page > totalSkuPages) return null;
+                          return (
+                            <Button
+                              key={page}
+                              variant={page === skuPage ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => fetchSkuCombos(page, skuSearch)}
+                            >
+                              {page}
+                            </Button>
+                          );
+                        })}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchSkuCombos(skuPage + 1, skuSearch)}
+                          disabled={skuPage >= totalSkuPages}
+                        >
+                          Sau
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchSkuCombos(totalSkuPages, skuSearch)}
+                          disabled={skuPage >= totalSkuPages}
+                        >
+                          Cuối
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* TAB 3: Ngưỡng Min/Max */}
+        <TabsContent value="thresholds">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Cài đặt ngưỡng tồn kho</CardTitle>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground">Hiển thị</span>
+                    <select
+                      value={thresholdLimit}
+                      onChange={(e) => { setThresholdLimit(Number(e.target.value)); fetchThresholds(1, thresholdSearch); }}
+                      className="h-8 rounded border border-slate-200 px-2 text-xs"
+                    >
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                      <option value={500}>500</option>
+                    </select>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      placeholder="Tìm kiếm sản phẩm..."
+                      value={thresholdSearch}
+                      onChange={(e) => setThresholdSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && fetchThresholds(1, thresholdSearch)}
+                      className="w-48 h-9"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setThresholdImportOpen(true)}
+                    disabled={!canEdit && !canSave}
+                  >
+                    <Upload className="w-4 h-4 mr-1" />
+                    Nhập Template
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setThresholdTemplateOpen(true)}
+                  >
+                    <Download className="w-4 h-4 mr-1" />
+                    Xuất Template
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setThresholdExportOpen(true)}
+                  >
+                    <Download className="w-4 h-4 mr-1" />
+                    Xuất Excel
+                  </Button>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                Ngưỡng Min: Cảnh báo khi tồn kho dưới mức này. Ngưỡng Max: Cảnh báo khi tồn kho vượt mức này.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {thresholdLoading ? (
+                <div className="flex items-center justify-center h-48">
+                  <div className="spinner" style={{ borderTopColor: '#0d6efd' }}></div>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">STT</TableHead>
+                          <TableHead>Tên sản phẩm</TableHead>
+                          <TableHead>SKU</TableHead>
+                          <TableHead>Danh mục</TableHead>
+                          <TableHead className="text-right">Tồn kho</TableHead>
+                          <TableHead className="text-right">Ngưỡng Min</TableHead>
+                          <TableHead className="text-right">Ngưỡng Max</TableHead>
+                          <TableHead className="w-28">Hành động</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {thresholds.map((item, idx) => (
+                          <TableRow key={item.id}>
+                            <TableCell>{(thresholdPage - 1) * thresholdLimit + idx + 1}</TableCell>
+                            <TableCell className="font-medium">{item.name}</TableCell>
+                            <TableCell className="font-mono text-xs">{item.sku}</TableCell>
+                            <TableCell>{item.category?.name || '-'}</TableCell>
+                            <TableCell className="text-right font-medium">
+                              <span className={
+                                item.stock === 0 ? 'text-red-600' :
+                                item.minThreshold > 0 && item.stock < item.minThreshold ? 'text-yellow-600' :
+                                item.maxThreshold > 0 && item.stock > item.maxThreshold ? 'text-orange-600' :
+                                'text-green-600'
+                              }>
+                                {item.stock}
+                              </span>
+                            </TableCell>
+
+                            {editingId === item.id ? (
+                              <>
+                                <TableCell>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={editMinVal}
+                                    onChange={(e) => setEditMinVal(e.target.value)}
+                                    className="w-20 h-8 text-right"
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={editMaxVal}
+                                    onChange={(e) => setEditMaxVal(e.target.value)}
+                                    className="w-20 h-8 text-right"
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex gap-1">
+                                    <Button size="sm" variant="default" onClick={() => saveThreshold(item.id)} className="h-7 px-2" disabled={!canSave && !canEdit}>
+                                      Lưu
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={cancelEditThreshold} className="h-7 px-2">
+                                      <X className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </>
+                            ) : (
+                              <>
+                                <TableCell className="text-right text-muted-foreground">{item.minThreshold}</TableCell>
+                                <TableCell className="text-right text-muted-foreground">{item.maxThreshold}</TableCell>
+                                <TableCell>
+                                  {canEdit && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => startEditThreshold(item)}
+                                      className="h-7"
+                                    >
+                                      Sửa
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </>
+                            )}
+                          </TableRow>
+                        ))}
+                        {thresholds.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                              Chưa có sản phẩm nào
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination */}
+                  {thresholdTotal > 0 && (
+                    <div className="flex items-center justify-between mt-4">
+                      <p className="text-sm text-muted-foreground">
+                        Hiển thị {(thresholdPage - 1) * thresholdLimit + 1} - {Math.min(thresholdPage * thresholdLimit, thresholdTotal)} trong tổng {thresholdTotal} bản ghi
+                      </p>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchThresholds(1, thresholdSearch)}
+                          disabled={thresholdPage <= 1}
+                        >
+                          Đầu
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchThresholds(thresholdPage - 1, thresholdSearch)}
+                          disabled={thresholdPage <= 1}
+                        >
+                          Trước
+                        </Button>
+                        {Array.from({ length: Math.min(7, totalThresholdPages) }, (_, i) => {
+                          const start = Math.max(1, Math.min(thresholdPage - 3, totalThresholdPages - 6));
+                          const page = start + i;
+                          if (page > totalThresholdPages) return null;
+                          return (
+                            <Button
+                              key={page}
+                              variant={page === thresholdPage ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => fetchThresholds(page, thresholdSearch)}
+                            >
+                              {page}
+                            </Button>
+                          );
+                        })}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchThresholds(thresholdPage + 1, thresholdSearch)}
+                          disabled={thresholdPage >= totalThresholdPages}
+                        >
+                          Sau
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchThresholds(totalThresholdPages, thresholdSearch)}
+                          disabled={thresholdPage >= totalThresholdPages}
+                        >
+                          Cuối
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* SKU Export Dialog */}
+      <TransactionExportDialog
+        open={skuExportOpen}
+        onOpenChange={setSkuExportOpen}
+        title="Xuất Excel SKU tổng hợp"
+        onExportAll={exportAllSkuCombos}
+        onExportFiltered={exportFilteredSkuCombos}
+        isExporting={skuExporting}
+      />
+
+      {/* Hidden file input for threshold template import */}
+      <input
+        ref={thresholdImportFileRef}
+        type="file"
+        accept=".xlsx,.xls"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) importThresholdTemplate(file);
+        }}
+      />
+
+      {/* Threshold Import Dialog */}
+      <Dialog open={thresholdImportOpen} onOpenChange={(open) => {
+        setThresholdImportOpen(open);
+        if (!open) setThresholdImportResult(null);
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Nhập Template ngưỡng Min/Max</DialogTitle>
+            <DialogDescription>
+              Chọn file Excel đã điền ngưỡng Min/Max (theo template xuất ra). Hệ thống sẽ cập nhật hàng loạt dựa trên cột <strong>SKU</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {thresholdImportResult ? (
+            <div className="space-y-3">
+              <div className={`rounded-lg border px-4 py-3 text-sm ${thresholdImportResult.updated > 0 ? 'border-green-200 bg-green-50 text-green-800' : 'border-yellow-200 bg-yellow-50 text-yellow-800'}`}>
+                <span className="font-semibold">Cập nhật thành công: {thresholdImportResult.updated} sản phẩm</span>
+                {thresholdImportResult.errors.length > 0 && (
+                  <span className="ml-2 text-orange-600">({thresholdImportResult.errors.length} lỗi)</span>
+                )}
+              </div>
+              {thresholdImportResult.errors.length > 0 && (
+                <div className="max-h-48 overflow-y-auto rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700 space-y-1">
+                  <p className="font-semibold mb-1">Chi tiết lỗi:</p>
+                  {thresholdImportResult.errors.map((err, i) => (
+                    <div key={i} className="flex gap-2">
+                      <span className="font-mono font-medium">{err.sku}</span>
+                      <span>—</span>
+                      <span>{err.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-lg border-2 border-dashed border-slate-200 px-6 py-8 text-center text-sm text-slate-500">
+              {thresholdImporting ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="spinner" style={{ borderTopColor: '#0d6efd' }} />
+                  <span>Đang xử lý...</span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <Upload className="w-8 h-8 text-slate-300" />
+                  <span>Chọn file Excel (.xlsx) đã điền ngưỡng Min/Max</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => { setThresholdImportOpen(false); setThresholdImportResult(null); }}
+              disabled={thresholdImporting}
+            >
+              {thresholdImportResult ? 'Đóng' : 'Huỷ'}
+            </Button>
+            {!thresholdImportResult && (
+              <Button
+                onClick={() => thresholdImportFileRef.current?.click()}
+                disabled={thresholdImporting}
+              >
+                {thresholdImporting ? (
+                  <>
+                    <div className="spinner mr-2" style={{ width: 14, height: 14, borderTopColor: '#fff' }} />
+                    Đang xử lý...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4 mr-1" />
+                    Chọn file
+                  </>
+                )}
+              </Button>
+            )}
+            {thresholdImportResult && (
+              <Button
+                variant="outline"
+                onClick={() => { setThresholdImportResult(null); thresholdImportFileRef.current?.click(); }}
+              >
+                <Upload className="w-4 h-4 mr-1" />
+                Nhập file khác
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Threshold Template Export Dialog */}
+      <Dialog open={thresholdTemplateOpen} onOpenChange={setThresholdTemplateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Xuất Template ngưỡng Min/Max</DialogTitle>
+            <DialogDescription>
+              Xuất file Excel gồm toàn bộ sản phẩm với các cột: <strong>Tên sản phẩm</strong>, <strong>SKU</strong>, <strong>Ngưỡng Min</strong>, <strong>Ngưỡng Max</strong>. Dùng để chỉnh sửa hàng loạt rồi nhập lại.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setThresholdTemplateOpen(false)}
+              disabled={thresholdTemplateExporting}
+            >
+              Huỷ
+            </Button>
+            <Button
+              onClick={exportThresholdTemplate}
+              disabled={thresholdTemplateExporting}
+            >
+              {thresholdTemplateExporting ? (
+                <>
+                  <div className="spinner mr-2" style={{ width: 14, height: 14, borderTopColor: '#fff' }} />
+                  Đang xuất...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4 mr-1" />
+                  Xuất Template
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Threshold Export Dialog */}
+      <TransactionExportDialog
+        open={thresholdExportOpen}
+        onOpenChange={setThresholdExportOpen}
+        title="Xuất Excel ngưỡng tồn kho"
+        onExportAll={exportAllThresholds}
+        onExportFiltered={exportFilteredThresholds}
+        isExporting={thresholdExporting}
+      />
+
+      <Dialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog(prev => ({ ...prev, open }))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5" />
+              Không thể xoá
+            </DialogTitle>
+            <DialogDescription>
+              Mục này đang được sử dụng ở dữ liệu khác. Xem chi tiết bên dưới.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteDialog.loading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="spinner" style={{ borderTopColor: '#0d6efd' }}></div>
+              <span className="ml-2 text-sm text-slate-500">Đang kiểm tra dữ liệu liên quan...</span>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[360px] overflow-y-auto">
+              {deleteDialog.usages.length === 0 ? (
+                <p className="text-sm text-slate-500 py-4 text-center">Không tìm thấy dữ liệu liên quan.</p>
+              ) : (
+                deleteDialog.usages.map((usage, idx) => (
+                  <div key={idx} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-1 text-sm font-semibold text-slate-700">
+                      {usage.label} ({usage.count} bản ghi)
+                    </div>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="pb-1 pr-2 font-medium">Tên</th>
+                          <th className="pb-1 font-medium">Chi tiết</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usage.records.slice(0, 10).map((rec) => (
+                          <tr key={rec.id} className="border-b border-slate-100">
+                            <td className="py-1 pr-2 font-medium text-slate-800">{rec.name}</td>
+                            <td className="py-1 text-slate-600">{rec.detail}</td>
+                          </tr>
+                        ))}
+                        {usage.count > 10 && (
+                          <tr>
+                            <td colSpan={2} className="py-1 text-center text-slate-400 italic">
+                              ... và {usage.count - 10} bản ghi khác
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteDialog(prev => ({ ...prev, open: false }))}
+            >
+              Huỷ
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleForceDelete}
+              disabled={deleteDialog.usages.length === 0}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              <Trash2 className="mr-1 h-4 w-4" />
+              Xoá tất cả dữ liệu liên quan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </AppLayout>
+  );
+}
+
